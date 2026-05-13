@@ -36,9 +36,10 @@ export const createEmptyDraft = (date = dateKey(today()), categoryTitle = 'Gener
   repeatWeekdays: [new Date().getDay()],
   repeatEndDate: dateKey(addDays(today(), 28)),
   note: '',
+  attachments: [],
 })
 
-export const draftFromTask = (task: PlannerTaskItem, note = ''): TaskDraft => {
+export const draftFromTask = (task: PlannerTaskItem, note = '', attachments: TaskDraft['attachments'] = []): TaskDraft => {
   const deadline = task.deadline === null ? null : new Date(task.deadline)
   const start = task.startDate === null ? null : new Date(task.startDate)
   const baseDate = deadline ?? today()
@@ -56,6 +57,7 @@ export const draftFromTask = (task: PlannerTaskItem, note = ''): TaskDraft => {
     repeatWeekdays: [baseDate.getDay()],
     repeatEndDate: dateKey(addDays(baseDate, 28)),
     note,
+    attachments,
   }
 }
 

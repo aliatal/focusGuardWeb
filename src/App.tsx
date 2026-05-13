@@ -16,6 +16,7 @@ import {
 import {
   defaultCategories,
   loadAiCredits,
+  loadAttachments,
   loadCategories,
   loadNotes,
   loadPurchases,
@@ -24,6 +25,7 @@ import {
   paletteOptions,
   pruneExpiredTasks,
   saveAiCredits,
+  saveAttachments,
   saveCategories,
   saveNotes,
   savePurchases,
@@ -51,7 +53,6 @@ import type {
   CompletedTaskRetentionDays,
   EditScope,
   NotebookFontSize,
-  NotebookFontStyle,
   NotebookSort,
   Page,
   PlannerCategory,
@@ -59,16 +60,17 @@ import type {
   PlannerTaskItem,
   PurchaseRecord,
   ReminderOffset,
+  StoredAttachment,
+  TaskAttachments,
   TaskDraft,
   TaskSpecialFilter,
   TaskStatusFilter,
 } from './types'
 
 const navItems: Array<{ page: Page; label: string; accent: string }> = [
-  { page: 'dashboard', label: 'Home', accent: 'home' },
-  { page: 'tasklist', label: 'Tasklist', accent: 'tasklist' },
+  { page: 'dashboard', label: 'Today', accent: 'home' },
   { page: 'calendar', label: 'Calendar', accent: 'calendar' },
-  { page: 'ai', label: 'AI', accent: 'ai' },
+  { page: 'ai', label: 'Import', accent: 'ai' },
   { page: 'settings', label: 'Settings', accent: 'settings' },
 ]
 
@@ -113,6 +115,7 @@ function App() {
     pruneExpiredTasks(loadTasks(), loadSettings().completedTaskRetentionDays),
   )
   const [notes, setNotes] = useState(() => loadNotes())
+  const [attachments, setAttachments] = useState<TaskAttachments>(() => loadAttachments())
   const [taskDraft, setTaskDraft] = useState<TaskDraft>(() => createEmptyDraft(dateKey(today()), loadCategories()[0].title))
   const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilter>('open')
   const [taskSpecialFilter, setTaskSpecialFilter] = useState<TaskSpecialFilter>('all')
@@ -124,11 +127,12 @@ function App() {
   const [aiCredits, setAiCredits] = useState(() => loadAiCredits())
   const [purchaseHistory, setPurchaseHistory] = useState<PurchaseRecord[]>(() => loadPurchases())
   const [aiSuggestions, setAiSuggestions] = useState<AiSuggestion[]>([])
-  const [aiStatus, setAiStatus] = useState('AI import is mocked for MVP and structured for a Netlify Function.')
+  const [aiStatus, setAiStatus] = useState('Import tools are ready. Review suggestions before anything is added to your planner.')
   const [aiPendingCost, setAiPendingCost] = useState(10)
 
   useEffect(() => saveTasks(tasks), [tasks])
   useEffect(() => saveNotes(notes), [notes])
+  useEffect(() => saveAttachments(attachments), [attachments])
   useEffect(() => saveCategories(categories), [categories])
   useEffect(() => saveSettings(settings), [settings])
   useEffect(() => saveAiCredits(aiCredits), [aiCredits])
@@ -171,6 +175,12 @@ function App() {
         ...Object.fromEntries(createdTasks.map((task) => [task.id, trimmedNote])),
       }))
     }
+    if (draft.attachments.length > 0) {
+      setAttachments((current) => ({
+        ...current,
+        ...Object.fromEntries(createdTasks.map((task) => [task.id, draft.attachments])),
+      }))
+    }
     setTaskDraft(createEmptyDraft(draft.deadlineDate, categories[0]?.title ?? 'General'))
   }
 
@@ -183,7 +193,7 @@ function App() {
       setScopeDialog({ action: 'edit', task })
       return
     }
-    setEditing({ task, draft: draftFromTask(task, notes[task.id] ?? ''), scope: 'onlyThisTask' })
+    setEditing({ task, draft: draftFromTask(task, notes[task.id] ?? '', attachments[task.id] ?? []), scope: 'onlyThisTask' })
   }
 
   function requestDelete(task: PlannerTaskItem) {
@@ -203,7 +213,7 @@ function App() {
     }
     setEditing({
       task: scopeDialog.task,
-      draft: draftFromTask(scopeDialog.task, notes[scopeDialog.task.id] ?? ''),
+      draft: draftFromTask(scopeDialog.task, notes[scopeDialog.task.id] ?? '', attachments[scopeDialog.task.id] ?? []),
       scope,
     })
     setScopeDialog(null)
@@ -217,6 +227,12 @@ function App() {
       const trimmed = draft.note.trim()
       if (trimmed.length === 0) delete next[editing.task.id]
       else next[editing.task.id] = trimmed
+      return next
+    })
+    setAttachments((current) => {
+      const next = { ...current }
+      if (draft.attachments.length === 0) delete next[editing.task.id]
+      else next[editing.task.id] = draft.attachments
       return next
     })
     setEditing(null)
@@ -262,7 +278,7 @@ function App() {
     }
     setAiCredits((current) => current + pack.credits)
     setPurchaseHistory((current) => [record, ...current])
-    setAiStatus(`Added ${pack.credits} credits locally. Stripe Checkout will replace this MVP action.`)
+    setAiStatus(`Added ${pack.credits} credits to your balance.`)
   }
 
   function mockAiImport(kind: 'photo' | 'pdf' | 'cleanup' | 'dayPlan') {
@@ -324,32 +340,18 @@ function App() {
             tasks={tasks}
             categories={categories}
             notes={notes}
+            attachments={attachments}
+            draft={taskDraft}
+            filteredTasks={filteredTasks}
+            statusFilter={taskStatusFilter}
+            specialFilter={taskSpecialFilter}
+            categoryFilter={categoryFilter}
             dueTodayTasks={dueTodayTasks}
             overdueTasks={overdueTasks}
             upcomingTasks={upcomingTasks}
             openCount={openTasks.length}
             completedCount={completedTasks.length}
             onSettingsChange={updateSettings}
-            onToggleTask={toggleTask}
-            onEditTask={requestEdit}
-            onDeleteTask={requestDelete}
-            onOpenCalendar={(nextDate) => {
-              setActivePage('calendar')
-              selectCalendarDate(nextDate)
-            }}
-          />
-        )
-      case 'tasklist':
-        return (
-          <TasklistPage
-            categories={categories}
-            settings={settings}
-            draft={taskDraft}
-            filteredTasks={filteredTasks}
-            notes={notes}
-            statusFilter={taskStatusFilter}
-            specialFilter={taskSpecialFilter}
-            categoryFilter={categoryFilter}
             onDraftChange={setTaskDraft}
             onAddTasks={addTasks}
             onStatusFilterChange={setTaskStatusFilter}
@@ -375,6 +377,7 @@ function App() {
             categories={categories}
             settings={settings}
             notes={notes}
+            attachments={attachments}
             draft={taskDraft}
             onDraftChange={setTaskDraft}
             onAddTasks={addTasks}
@@ -490,12 +493,23 @@ function DashboardPage({
   tasks,
   categories,
   notes,
+  attachments,
+  draft,
+  filteredTasks,
+  statusFilter,
+  specialFilter,
+  categoryFilter,
   dueTodayTasks,
   overdueTasks,
   upcomingTasks,
   openCount,
   completedCount,
   onSettingsChange,
+  onDraftChange,
+  onAddTasks,
+  onStatusFilterChange,
+  onSpecialFilterChange,
+  onCategoryFilterChange,
   onToggleTask,
   onEditTask,
   onDeleteTask,
@@ -505,12 +519,23 @@ function DashboardPage({
   tasks: PlannerTaskItem[]
   categories: PlannerCategory[]
   notes: Record<string, string>
+  attachments: TaskAttachments
+  draft: TaskDraft
+  filteredTasks: PlannerTaskItem[]
+  statusFilter: TaskStatusFilter
+  specialFilter: TaskSpecialFilter
+  categoryFilter: string
   dueTodayTasks: PlannerTaskItem[]
   overdueTasks: PlannerTaskItem[]
   upcomingTasks: PlannerTaskItem[]
   openCount: number
   completedCount: number
   onSettingsChange: (patch: Partial<PlannerSettings>) => void
+  onDraftChange: (draft: TaskDraft) => void
+  onAddTasks: (draft: TaskDraft) => void
+  onStatusFilterChange: (filter: TaskStatusFilter) => void
+  onSpecialFilterChange: (filter: TaskSpecialFilter) => void
+  onCategoryFilterChange: (filter: string) => void
   onToggleTask: (taskId: string) => void
   onEditTask: (task: PlannerTaskItem) => void
   onDeleteTask: (task: PlannerTaskItem) => void
@@ -519,46 +544,50 @@ function DashboardPage({
   const notebookTasks = notebookFilteredTasks(tasks, settings.notebookSort)
   const oneTimeTasks = notebookTasks.filter((task) => task.seriesID === null)
   const recurringTasks = notebookTasks.filter((task) => task.seriesID !== null)
+  const priorityTasks = sortTasks([...overdueTasks, ...dueTodayTasks]).slice(0, 8)
 
   return (
-    <div className="page">
+    <div className="page today-page">
       <PageHeader
-        eyebrow="Dashboard"
+        eyebrow="FocusGuard"
         title="Today"
         detail={homeDateFormatter.format(today())}
+        action={<StatusPill>{openCount} open tasks</StatusPill>}
       />
 
-      <section className="metric-strip" aria-label="Planner summary">
+      <section className="metric-strip compact" aria-label="Planner summary">
         <MetricCard label="Open tasks" value={openCount} />
-        <MetricCard label="Completed" value={completedCount} />
         <MetricCard label="Due today" value={dueTodayTasks.length} />
         <MetricCard label="Overdue" value={overdueTasks.length} tone={overdueTasks.length > 0 ? 'danger' : 'normal'} />
+        <MetricCard label="Completed" value={completedCount} />
       </section>
 
-      <section className="dashboard-grid">
-        {overdueTasks.length > 0 ? (
-          <Panel title="Overdue" detail={`${overdueTasks.length} needs attention`} tone="danger">
-            <TaskStack
-              tasks={overdueTasks}
-              categories={categories}
-              settings={settings}
-              notes={notes}
-              onToggleTask={onToggleTask}
-              onEditTask={onEditTask}
-              onDeleteTask={onDeleteTask}
-              onOpenCalendar={onOpenCalendar}
-            />
-          </Panel>
-        ) : null}
+      <section className="today-workspace">
+        <Panel title="Add task" detail={draft.repeats ? 'Repeating task' : 'Manual entry'} className="composer-panel">
+          <TaskForm
+            draft={draft}
+            categories={categories}
+            settings={settings}
+            submitLabel={draft.repeats ? 'Add repeats' : 'Add task'}
+            onDraftChange={onDraftChange}
+            onSubmit={onAddTasks}
+          />
+        </Panel>
 
-        <Panel title="Due today" detail={`${dueTodayTasks.length} tasks`}>
+        <Panel
+          title={overdueTasks.length > 0 ? 'Priority queue' : 'Today queue'}
+          detail={overdueTasks.length > 0 ? `${overdueTasks.length} overdue` : `${dueTodayTasks.length} due today`}
+          tone={overdueTasks.length > 0 ? 'danger' : undefined}
+          className="focus-panel"
+        >
           <TaskStack
-            tasks={dueTodayTasks}
+            tasks={priorityTasks}
             categories={categories}
             settings={settings}
             notes={notes}
-            emptyTitle="No open tasks due today"
-            emptyDetail="Add a task with today as its deadline when something comes up."
+            attachments={attachments}
+            emptyTitle="No urgent work"
+            emptyDetail="Tasks due today and overdue items will appear here."
             onToggleTask={onToggleTask}
             onEditTask={onEditTask}
             onDeleteTask={onDeleteTask}
@@ -566,14 +595,15 @@ function DashboardPage({
           />
         </Panel>
 
-        <Panel title="Upcoming" detail="Next deadlines">
+        <Panel title="Upcoming" detail="Next deadlines" className="upcoming-panel">
           <TaskStack
             tasks={upcomingTasks}
             categories={categories}
             settings={settings}
             notes={notes}
-            emptyTitle="No scheduled upcoming work"
-            emptyDetail="Tasks with deadlines will appear here after today."
+            attachments={attachments}
+            emptyTitle="No upcoming deadlines"
+            emptyDetail="Scheduled work after today will appear here."
             onToggleTask={onToggleTask}
             onEditTask={onEditTask}
             onDeleteTask={onDeleteTask}
@@ -581,11 +611,57 @@ function DashboardPage({
           />
         </Panel>
 
-        <section className={`notebook-panel ${settings.notebookFontStyle} ${settings.notebookFontSize}`}>
+        <Panel title="All tasks" detail={`${filteredTasks.length} shown`} className="library-panel">
+          <div className="filters-bar">
+            <Segmented
+              value={statusFilter}
+              onChange={(value) => onStatusFilterChange(value as TaskStatusFilter)}
+              items={[
+                ['open', 'Open'],
+                ['completed', 'Completed'],
+                ['all', 'All'],
+              ]}
+            />
+            <SelectField
+              label="View"
+              value={specialFilter}
+              onChange={(value) => onSpecialFilterChange(value as TaskSpecialFilter)}
+              options={[
+                ['all', 'All tasks'],
+                ['dueToday', 'Due today'],
+                ['overdue', 'Overdue'],
+                ['noDeadline', 'Anytime'],
+              ]}
+            />
+            {settings.categoriesEnabled ? (
+              <SelectField
+                label="Category"
+                value={categoryFilter}
+                onChange={onCategoryFilterChange}
+                options={[['All', 'All categories'], ...categories.map((category) => [category.title, category.title] as const)]}
+              />
+            ) : null}
+          </div>
+          <TaskStack
+            tasks={filteredTasks}
+            categories={categories}
+            settings={settings}
+            notes={notes}
+            attachments={attachments}
+            emptyTitle="No tasks match this view"
+            emptyDetail="Adjust the filters or add a new task."
+            onToggleTask={onToggleTask}
+            onEditTask={onEditTask}
+            onDeleteTask={onDeleteTask}
+            onOpenCalendar={onOpenCalendar}
+          />
+        </Panel>
+
+        <section className={`notebook-panel compact-summary ${settings.notebookFontStyle} ${settings.notebookFontSize}`}>
           <div className="notebook-toolbar">
             <div>
-              <p className="eyebrow">Notebook overview</p>
-              <h2>{homeDateFormatter.format(today())}</h2>
+              <p className="eyebrow">Overview</p>
+              <h2>One-time and recurring</h2>
             </div>
             <div className="control-cluster">
               <SelectField
@@ -605,154 +681,45 @@ function DashboardPage({
                 ]}
               />
               <SelectField
-                label="Font"
-                value={settings.notebookFontStyle}
-                onChange={(value) => onSettingsChange({ notebookFontStyle: value as NotebookFontStyle })}
-                options={[
-                  ['system', 'System'],
-                  ['rounded', 'Rounded'],
-                  ['serif', 'Serif'],
-                ]}
-              />
-              <SelectField
-                label="Size"
+                label="Density"
                 value={settings.notebookFontSize}
                 onChange={(value) => onSettingsChange({ notebookFontSize: value as NotebookFontSize })}
                 options={[
                   ['compact', 'Compact'],
-                  ['medium', 'Medium'],
+                  ['medium', 'Comfortable'],
                   ['large', 'Large'],
                 ]}
               />
             </div>
           </div>
 
-          <NotebookSection
-            title="One-Time"
-            tasks={oneTimeTasks}
-            categories={categories}
+          <div className="overview-columns">
+            <NotebookSection
+              title="One-Time"
+              tasks={oneTimeTasks.slice(0, 6)}
+              categories={categories}
             settings={settings}
             notes={notes}
-            emptyTitle="No one-time tasks in this view"
-            onToggleTask={onToggleTask}
-            onEditTask={onEditTask}
-            onDeleteTask={onDeleteTask}
-          />
-          <NotebookSection
-            title="Recurring"
-            tasks={recurringTasks}
-            categories={categories}
-            settings={settings}
-            notes={notes}
-            emptyTitle="No recurring tasks in this view"
-            onToggleTask={onToggleTask}
-            onEditTask={onEditTask}
-            onDeleteTask={onDeleteTask}
-          />
-        </section>
-      </section>
-    </div>
-  )
-}
-
-function TasklistPage({
-  categories,
-  settings,
-  draft,
-  filteredTasks,
-  notes,
-  statusFilter,
-  specialFilter,
-  categoryFilter,
-  onDraftChange,
-  onAddTasks,
-  onStatusFilterChange,
-  onSpecialFilterChange,
-  onCategoryFilterChange,
-  onToggleTask,
-  onEditTask,
-  onDeleteTask,
-  onOpenCalendar,
-}: {
-  categories: PlannerCategory[]
-  settings: PlannerSettings
-  draft: TaskDraft
-  filteredTasks: PlannerTaskItem[]
-  notes: Record<string, string>
-  statusFilter: TaskStatusFilter
-  specialFilter: TaskSpecialFilter
-  categoryFilter: string
-  onDraftChange: (draft: TaskDraft) => void
-  onAddTasks: (draft: TaskDraft) => void
-  onStatusFilterChange: (filter: TaskStatusFilter) => void
-  onSpecialFilterChange: (filter: TaskSpecialFilter) => void
-  onCategoryFilterChange: (filter: string) => void
-  onToggleTask: (taskId: string) => void
-  onEditTask: (task: PlannerTaskItem) => void
-  onDeleteTask: (task: PlannerTaskItem) => void
-  onOpenCalendar: (date: string) => void
-}) {
-  return (
-    <div className="page">
-      <PageHeader eyebrow="Tasklist" title="Task manager" detail={`${filteredTasks.length} shown`} />
-
-      <section className="tasks-layout">
-        <Panel title="Add task" detail="Manual planning">
-          <TaskForm
-            draft={draft}
-            categories={categories}
-            settings={settings}
-            submitLabel={draft.repeats ? 'Add repeats' : 'Add task'}
-            onDraftChange={onDraftChange}
-            onSubmit={onAddTasks}
-          />
-        </Panel>
-
-        <Panel title="Tasks" detail="Create, edit, complete, delete" className="task-browser">
-          <div className="filters-bar">
-            <Segmented
-              value={statusFilter}
-              onChange={(value) => onStatusFilterChange(value as TaskStatusFilter)}
-              items={[
-                ['open', 'Open'],
-                ['completed', 'Completed'],
-                ['all', 'All'],
-              ]}
+            attachments={attachments}
+              emptyTitle="No one-time tasks in this view"
+              onToggleTask={onToggleTask}
+              onEditTask={onEditTask}
+              onDeleteTask={onDeleteTask}
             />
-            <SelectField
-              label="Filter"
-              value={specialFilter}
-              onChange={(value) => onSpecialFilterChange(value as TaskSpecialFilter)}
-              options={[
-                ['all', 'All tasks'],
-                ['dueToday', 'Due today'],
-                ['overdue', 'Overdue'],
-                ['noDeadline', 'No deadline'],
-              ]}
+            <NotebookSection
+              title="Recurring"
+              tasks={recurringTasks.slice(0, 6)}
+              categories={categories}
+              settings={settings}
+              notes={notes}
+              attachments={attachments}
+              emptyTitle="No recurring tasks in this view"
+              onToggleTask={onToggleTask}
+              onEditTask={onEditTask}
+              onDeleteTask={onDeleteTask}
             />
-            {settings.categoriesEnabled ? (
-              <SelectField
-                label="Category"
-                value={categoryFilter}
-                onChange={onCategoryFilterChange}
-                options={[['All', 'All categories'], ...categories.map((category) => [category.title, category.title] as const)]}
-              />
-            ) : null}
           </div>
-
-          <TaskStack
-            tasks={filteredTasks}
-            categories={categories}
-            settings={settings}
-            notes={notes}
-            emptyTitle="No tasks match these filters"
-            emptyDetail="Change the filters or add a task from the form."
-            onToggleTask={onToggleTask}
-            onEditTask={onEditTask}
-            onDeleteTask={onDeleteTask}
-            onOpenCalendar={onOpenCalendar}
-          />
-        </Panel>
+        </section>
       </section>
     </div>
   )
@@ -767,6 +734,7 @@ function CalendarPage({
   categories,
   settings,
   notes,
+  attachments,
   draft,
   onDraftChange,
   onAddTasks,
@@ -784,6 +752,7 @@ function CalendarPage({
   categories: PlannerCategory[]
   settings: PlannerSettings
   notes: Record<string, string>
+  attachments: TaskAttachments
   draft: TaskDraft
   onDraftChange: (draft: TaskDraft) => void
   onAddTasks: (draft: TaskDraft) => void
@@ -874,6 +843,7 @@ function CalendarPage({
               categories={categories}
               settings={settings}
               notes={notes}
+              attachments={attachments}
               emptyTitle="Nothing scheduled"
               emptyDetail="Use the form above to add a task to this date."
               onToggleTask={onToggleTask}
@@ -910,18 +880,28 @@ function AiPage({
 }) {
   return (
     <div className="page">
-      <PageHeader eyebrow="AI" title="Credits and import" detail={`${credits} credits available`} />
+      <PageHeader eyebrow="Import" title="Bring work in" detail={`${credits} credits available`} />
 
       <section className="ai-grid">
-        <Panel title="Credit balance" detail="Paid AI only">
+        <Panel title="Balance" detail="Paid import tools">
           <div className="credit-balance">
             <span>Current balance</span>
             <strong>{credits}</strong>
-            <p>Free users get manual planning. AI actions require purchased credits and no browser-side OpenAI key.</p>
+            <p>Manual planning is always available. Imports and planning assists use credits only after you accept a result.</p>
           </div>
         </Panel>
 
-        <Panel title="Buy credits" detail="$5 minimum" className="wide-panel">
+        <Panel title="Import tools" detail="Review before adding">
+          <div className="action-list">
+            <ActionButton title="Photo or screenshot" detail="10 credits minimum" onClick={() => onMockImport('photo')} />
+            <ActionButton title="PDF document" detail="Scales by file size/pages, capped" onClick={() => onMockImport('pdf')} />
+            <ActionButton title="Schedule cleanup" detail="15 credits" onClick={() => onMockImport('cleanup')} />
+            <ActionButton title="Day plan" detail="8 credits" onClick={() => onMockImport('dayPlan')} />
+          </div>
+          <StatusBlock>{status}</StatusBlock>
+        </Panel>
+
+        <Panel title="Credit packs" detail="$5 minimum" className="wide-panel">
           <div className="pricing-grid">
             {creditPacks.map((pack) => (
               <article className="price-card" key={pack.label}>
@@ -929,21 +909,11 @@ function AiPage({
                 <strong>${pack.price}</strong>
                 <p>{pack.credits} credits</p>
                 <button type="button" onClick={() => onBuyCredits(pack)}>
-                  Stripe checkout later
+                  Buy credits
                 </button>
               </article>
             ))}
           </div>
-        </Panel>
-
-        <Panel title="AI import actions" detail="Mock backend response">
-          <div className="action-list">
-            <ActionButton title="Import screenshot/photo" detail="10 credits minimum" onClick={() => onMockImport('photo')} />
-            <ActionButton title="Import PDF" detail="Scales by file size/pages, capped" onClick={() => onMockImport('pdf')} />
-            <ActionButton title="Schedule cleanup" detail="15 credits" onClick={() => onMockImport('cleanup')} />
-            <ActionButton title="Day plan" detail="8 credits" onClick={() => onMockImport('dayPlan')} />
-          </div>
-          <StatusBlock>{status}</StatusBlock>
         </Panel>
 
         <Panel title="Review suggestions" detail={`${pendingCost} credits on confirm`}>
@@ -979,18 +949,18 @@ function AiPage({
           )}
         </Panel>
 
-        <Panel title="Architecture" detail="Production path" className="wide-panel">
+        <Panel title="Usage" detail="Credit policy" className="wide-panel">
           <div className="architecture-grid">
-            <RuleItem title="Browser" value="Calls serverless function" />
-            <RuleItem title="Function" value="Checks auth and credits" />
-            <RuleItem title="OpenAI" value="Server-side only" />
-            <RuleItem title="Credits" value="Deduct after accepted result" />
+            <RuleItem title="Photo import" value="10+ credits" />
+            <RuleItem title="PDF import" value="Capped scaling" />
+            <RuleItem title="Cleanup" value="15 credits" />
+            <RuleItem title="Failed request" value="0 credits" />
           </div>
         </Panel>
 
         <Panel title="Payments" detail="Purchase history">
           {purchaseHistory.length === 0 ? (
-            <EmptyState title="No local purchases yet" detail="MVP purchases are stored locally until Stripe Checkout is wired." />
+            <EmptyState title="No purchases yet" detail="Credit purchases will appear here." />
           ) : (
             <div className="history-list">
               {purchaseHistory.slice(0, 5).map((record) => (
@@ -1053,10 +1023,10 @@ function SettingsPage({
       <PageHeader eyebrow="Settings" title="Preferences" detail={settings.themeMode === 'system' ? 'System theme' : `${settings.themeMode} theme`} />
 
       <section className="settings-grid">
-        <Panel title="Account" detail="Supabase later">
+        <Panel title="Account" detail="Local workspace">
           <div className="account-box">
-            <strong>Local profile</strong>
-            <span>Auth is intentionally not mocked as a real login. Supabase auth will own sessions, users, and server-checked credits.</span>
+            <strong>Local workspace</strong>
+            <span>Your tasks are saved on this device. Cloud sync and sign-in can be connected when the hosted backend is ready.</span>
           </div>
         </Panel>
 
@@ -1235,6 +1205,13 @@ function TaskForm({
     onSubmit(draft)
   }
 
+  async function addAttachments(files: FileList | null) {
+    if (files === null) return
+    const selectedFiles = Array.from(files).slice(0, Math.max(0, 4 - draft.attachments.length))
+    const nextAttachments = await Promise.all(selectedFiles.map(readAttachment))
+    onDraftChange({ ...draft, attachments: [...draft.attachments, ...nextAttachments] })
+  }
+
   return (
     <form className={`task-form ${compact ? 'compact' : ''}`} onSubmit={submit}>
       <label className="field full">
@@ -1372,6 +1349,41 @@ function TaskForm({
         />
       </label>
 
+      <label className="field full attachment-field">
+        <span>Photos</span>
+        <input
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={(event) => {
+            void addAttachments(event.target.files)
+            event.currentTarget.value = ''
+          }}
+        />
+      </label>
+
+      {draft.attachments.length > 0 ? (
+        <div className="attachment-list">
+          {draft.attachments.map((attachment) => (
+            <div className="attachment-preview" key={attachment.id}>
+              <img src={attachment.dataUrl} alt="" />
+              <span>{attachment.name}</span>
+              <button
+                type="button"
+                onClick={() =>
+                  onDraftChange({
+                    ...draft,
+                    attachments: draft.attachments.filter((item) => item.id !== attachment.id),
+                  })
+                }
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       <button className="primary-button full" type="submit">
         {submitLabel}
       </button>
@@ -1379,11 +1391,28 @@ function TaskForm({
   )
 }
 
+function readAttachment(file: File): Promise<StoredAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => {
+      resolve({
+        id: crypto.randomUUID(),
+        name: file.name,
+        type: file.type,
+        dataUrl: String(reader.result),
+      })
+    })
+    reader.addEventListener('error', () => reject(reader.error))
+    reader.readAsDataURL(file)
+  })
+}
+
 function TaskStack({
   tasks,
   categories,
   settings,
   notes,
+  attachments,
   emptyTitle = 'No tasks',
   emptyDetail = 'Tasks appear here when they match this view.',
   onToggleTask,
@@ -1395,6 +1424,7 @@ function TaskStack({
   categories: PlannerCategory[]
   settings: PlannerSettings
   notes: Record<string, string>
+  attachments: TaskAttachments
   emptyTitle?: string
   emptyDetail?: string
   onToggleTask: (taskId: string) => void
@@ -1409,6 +1439,7 @@ function TaskStack({
       {tasks.map((task) => {
         const category = categoryForTask(categories, task)
         const calendarDate = task.deadline === null ? null : dateKey(new Date(task.deadline))
+        const taskAttachments = attachments[task.id] ?? []
         return (
           <article className={`task-row ${task.isCompleted ? 'completed' : ''}`} key={task.id}>
             <label className="task-check">
@@ -1423,6 +1454,11 @@ function TaskStack({
                 {task.seriesID !== null ? ' / Repeats' : ''}
               </small>
               {notes[task.id] ? <em>{notes[task.id]}</em> : null}
+              {taskAttachments.length > 0 ? (
+                <span className="attachment-meta">
+                  {taskAttachments.length} photo{taskAttachments.length === 1 ? '' : 's'}
+                </span>
+              ) : null}
             </button>
             {settings.categoriesEnabled ? <span className="category-chip" style={{ color: category.color }}>{category.title}</span> : null}
             <div className="task-actions">
@@ -1451,6 +1487,7 @@ function NotebookSection({
   categories,
   settings,
   notes,
+  attachments,
   emptyTitle,
   onToggleTask,
   onEditTask,
@@ -1461,6 +1498,7 @@ function NotebookSection({
   categories: PlannerCategory[]
   settings: PlannerSettings
   notes: Record<string, string>
+  attachments: TaskAttachments
   emptyTitle: string
   onToggleTask: (taskId: string) => void
   onEditTask: (task: PlannerTaskItem) => void
@@ -1474,6 +1512,7 @@ function NotebookSection({
         categories={categories}
         settings={settings}
         notes={notes}
+        attachments={attachments}
         emptyTitle={emptyTitle}
         emptyDetail="Adjust the notebook sort controls to inspect another date range."
         onToggleTask={onToggleTask}
@@ -1608,6 +1647,10 @@ function MetricCard({ label, value, tone = 'normal' }: { label: string; value: n
       <strong>{value}</strong>
     </article>
   )
+}
+
+function StatusPill({ children }: { children: React.ReactNode }) {
+  return <span className="status-pill">{children}</span>
 }
 
 function EmptyState({ title, detail }: { title: string; detail: string }) {

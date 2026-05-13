@@ -4,6 +4,7 @@ import type {
   PlannerSettings,
   PlannerTaskItem,
   PurchaseRecord,
+  TaskAttachments,
   TaskNotes,
 } from './types'
 import { startOfDay } from './dateUtils'
@@ -13,6 +14,7 @@ export const storageKeys = {
   categories: 'planner.categories',
   categoriesEnabled: 'planner.categoriesEnabled',
   notes: 'home.taskNotes',
+  attachments: 'focusguard.taskAttachments',
   settings: 'focusguard.settings',
   aiCredits: 'focusguard.aiCredits',
   purchases: 'focusguard.purchaseHistory',
@@ -74,6 +76,12 @@ export const loadNotes = (): TaskNotes => parseObject(localStorage.getItem(stora
 
 export const saveNotes = (notes: TaskNotes) => {
   localStorage.setItem(storageKeys.notes, JSON.stringify(notes))
+}
+
+export const loadAttachments = (): TaskAttachments => parseObject(localStorage.getItem(storageKeys.attachments), {})
+
+export const saveAttachments = (attachments: TaskAttachments) => {
+  localStorage.setItem(storageKeys.attachments, JSON.stringify(attachments))
 }
 
 export const loadSettings = (): PlannerSettings => {

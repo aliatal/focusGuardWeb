@@ -1,4 +1,4 @@
-export type Page = 'dashboard' | 'tasklist' | 'calendar' | 'ai' | 'settings'
+export type Page = 'dashboard' | 'calendar' | 'ai' | 'settings'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type CompletedTaskRetentionDays = 7 | 30 | 60 | 90 | -1
@@ -51,6 +51,15 @@ export type PlannerCategory = {
 
 export type TaskNotes = Record<string, string>
 
+export type StoredAttachment = {
+  id: string
+  name: string
+  type: string
+  dataUrl: string
+}
+
+export type TaskAttachments = Record<string, StoredAttachment[]>
+
 export type PlannerSettings = {
   notificationsEnabled: boolean
   deviceFeedbackEnabled: boolean
@@ -81,6 +90,7 @@ export type TaskDraft = {
   repeatWeekdays: number[]
   repeatEndDate: string
   note: string
+  attachments: StoredAttachment[]
 }
 
 export type AiSuggestion = {

@@ -30,14 +30,15 @@ Connect the repo in Netlify and keep secrets out of the Vite client environment.
 
 ## Current MVP
 
-- App-first dashboard, tasklist, month calendar, AI credits, and settings pages
+- App-first Today, Calendar, Import, and Settings pages
+- Today combines task capture, the priority queue, upcoming work, filters, and one-time/recurring overview
 - Local storage persistence isolated in `src/storage.ts`
-- `PlannerTaskItem` equivalent model with deadlines, optional duration, completion, notes, and recurrence series IDs
+- `PlannerTaskItem` equivalent model with deadlines, anytime tasks, optional duration, completion, notes, photo attachments, and recurrence series IDs
 - Category management with the iOS default category, color palette, and max 8 categories
 - Completed-task retention pruning for 7, 30, 60, 90 days, or Never
 - Recurring task edit/delete scope handling for "Only this task" and "This and later repeats"
 - Month calendar with Apple-style today marker, 4-character task chips, overflow chips, and selected-day task creation
-- Paid-only AI credit UI with mock task suggestions and credit deduction only after accepted results
+- Paid-only Import UI with mock task suggestions and credit deduction only after accepted results
 - Light, dark, and system theme support
 
 ## Future Architecture
@@ -64,4 +65,4 @@ Supabase can replace the storage helpers behind the current API shape:
 - `loadTasks` / `saveTasks`
 - `pruneExpiredTasks`
 - `loadCategories` / `saveCategories`
-- notes, settings, credits, and purchase history loaders
+- notes, attachments, settings, credits, and purchase history loaders
