@@ -1,228 +1,318 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
+import {
+  addMonths,
+  buildMonthGrid,
+  dateKey,
+  formatTaskTime,
+  fullDateFormatter,
+  homeDateFormatter,
+  monthFormatter,
+  parseDateKey,
+  shortDateFormatter,
+  today,
+} from './dateUtils'
+import {
+  defaultCategories,
+  loadAiCredits,
+  loadCategories,
+  loadNotes,
+  loadPurchases,
+  loadSettings,
+  loadTasks,
+  paletteOptions,
+  pruneExpiredTasks,
+  saveAiCredits,
+  saveCategories,
+  saveNotes,
+  savePurchases,
+  saveSettings,
+  saveTasks,
+} from './storage'
+import {
+  calendarChipLabel,
+  categoryForTask,
+  createEmptyDraft,
+  deleteTaskSeries,
+  draftFromTask,
+  filterTasks,
+  hasLaterRepeats,
+  isDueToday,
+  isOverdue,
+  notebookFilteredTasks,
+  sortTasks,
+  tasksFromDraft,
+  toggleTaskCompletion,
+  updateTaskSeries,
+} from './taskLogic'
+import type {
+  AiSuggestion,
+  CompletedTaskRetentionDays,
+  EditScope,
+  NotebookFontSize,
+  NotebookFontStyle,
+  NotebookSort,
+  Page,
+  PlannerCategory,
+  PlannerSettings,
+  PlannerTaskItem,
+  PurchaseRecord,
+  ReminderOffset,
+  TaskDraft,
+  TaskSpecialFilter,
+  TaskStatusFilter,
+} from './types'
 
-type Page = 'dashboard' | 'calendar' | 'tasks' | 'ai' | 'settings'
-type Category = 'Study' | 'Work' | 'Personal' | 'Health'
-type Priority = 'Low' | 'Medium' | 'High'
-
-type Task = {
-  id: string
-  title: string
-  date: string
-  time: string
-  category: Category
-  priority: Priority
-  done: boolean
-}
-
-type TaskDraft = {
-  title: string
-  date: string
-  time: string
-  category: Category
-  priority: Priority
-}
-
-type CreditPack = {
-  label: string
-  credits: number
-  price: number
-  description: string
-}
-
-const today = new Date()
-const todayKey = toDateInputValue(today)
-const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
-const tasksStorageKey = 'focusguard.tasks'
-
-const navItems: Array<{ page: Page; label: string }> = [
-  { page: 'dashboard', label: 'Dashboard' },
-  { page: 'calendar', label: 'Calendar' },
-  { page: 'tasks', label: 'Tasks' },
-  { page: 'ai', label: 'AI Credits' },
-  { page: 'settings', label: 'Settings' },
+const navItems: Array<{ page: Page; label: string; accent: string }> = [
+  { page: 'dashboard', label: 'Home', accent: 'home' },
+  { page: 'tasklist', label: 'Tasklist', accent: 'tasklist' },
+  { page: 'calendar', label: 'Calendar', accent: 'calendar' },
+  { page: 'ai', label: 'AI', accent: 'ai' },
+  { page: 'settings', label: 'Settings', accent: 'settings' },
 ]
 
-const creditPacks: CreditPack[] = [
-  {
-    label: 'Starter',
-    credits: 250,
-    price: 5,
-    description: 'For occasional imports and quick planning cleanup.',
-  },
-  {
-    label: 'Plus',
-    credits: 600,
-    price: 10,
-    description: 'Best fit for weekly planning and school workload cleanup.',
-  },
-  {
-    label: 'Power',
-    credits: 1500,
-    price: 20,
-    description: 'For frequent AI import, sorting, and schedule suggestions.',
-  },
+const reminderOffsets: ReminderOffset[] = [
+  'Off',
+  '15 mins before',
+  '30 mins before',
+  '1 hour before',
+  '2 hours before',
+  '6 hours before',
+  '12 hours before',
+  '24 hours before',
+  '48 hours before',
+  '1 week before',
 ]
 
-const categoryMeta: Record<Category, { color: string; tone: string }> = {
-  Study: { color: '#6d28d9', tone: 'study' },
-  Work: { color: '#0369a1', tone: 'work' },
-  Personal: { color: '#be123c', tone: 'personal' },
-  Health: { color: '#15803d', tone: 'health' },
-}
-
-const priorityRank: Record<Priority, number> = {
-  High: 0,
-  Medium: 1,
-  Low: 2,
-}
-
-const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const shortWeekdayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
-const monthFormatter = new Intl.DateTimeFormat('en', { month: 'long' })
-const compactDateFormatter = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' })
-const fullDateFormatter = new Intl.DateTimeFormat('en', {
-  weekday: 'long',
-  month: 'long',
-  day: 'numeric',
-})
-
-const seedTasks: Task[] = [
-  {
-    id: 'task-1',
-    title: 'Submit economics reflection',
-    date: todayKey,
-    time: '09:30',
-    category: 'Study',
-    priority: 'High',
-    done: false,
-  },
-  {
-    id: 'task-2',
-    title: 'Gym',
-    date: todayKey,
-    time: '18:00',
-    category: 'Health',
-    priority: 'Low',
-    done: false,
-  },
-  {
-    id: 'task-3',
-    title: 'Portfolio wireframe',
-    date: toDateInputValue(addDays(today, 2)),
-    time: '14:00',
-    category: 'Work',
-    priority: 'Medium',
-    done: false,
-  },
-  {
-    id: 'task-4',
-    title: 'Mother day gift',
-    date: toDateInputValue(new Date(today.getFullYear(), today.getMonth(), 11)),
-    time: '11:00',
-    category: 'Personal',
-    priority: 'Medium',
-    done: true,
-  },
-  {
-    id: 'task-5',
-    title: 'National Victoria prep',
-    date: toDateInputValue(new Date(today.getFullYear(), today.getMonth(), 18)),
-    time: '10:30',
-    category: 'Study',
-    priority: 'High',
-    done: false,
-  },
-  {
-    id: 'task-6',
-    title: 'Review Netlify deployment',
-    date: toDateInputValue(addDays(today, 4)),
-    time: '16:00',
-    category: 'Work',
-    priority: 'Medium',
-    done: false,
-  },
+const creditPacks = [
+  { label: 'Starter', price: 5, credits: 250 },
+  { label: 'Plus', price: 10, credits: 600 },
+  { label: 'Power', price: 20, credits: 1500 },
 ]
+
+const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const shortWeekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+
+type ScopeDialogState = {
+  action: 'edit' | 'delete'
+  task: PlannerTaskItem
+}
+
+type EditingState = {
+  task: PlannerTaskItem
+  draft: TaskDraft
+  scope: EditScope
+}
 
 function App() {
   const [activePage, setActivePage] = useState<Page>('dashboard')
-  const [visibleMonth, setVisibleMonth] = useState(monthStart)
-  const [selectedDate, setSelectedDate] = useState(todayKey)
-  const [tasks, setTasks] = useState<Task[]>(() => loadStoredTasks())
-  const [draft, setDraft] = useState<TaskDraft>(() => createEmptyDraft(todayKey))
-  const [taskFilter, setTaskFilter] = useState<'Open' | 'Done' | 'All'>('Open')
-  const [remindersEnabled, setRemindersEnabled] = useState(true)
-  const [emailEnabled, setEmailEnabled] = useState(true)
-  const [pushEnabled, setPushEnabled] = useState(false)
-
-  const openTasks = tasks.filter((task) => task.done === false)
-  const doneTasks = tasks.filter((task) => task.done)
-  const dueTodayTasks = openTasks
-    .filter((task) => task.date === todayKey)
-    .sort(compareTasks)
-  const overdueTasks = openTasks.filter((task) => task.date < todayKey).sort(compareTasks)
-  const upcomingTasks = openTasks
-    .filter((task) => task.date >= todayKey)
-    .sort(compareTasks)
-    .slice(0, 6)
-
-  const selectedTasks = useMemo(
-    () => tasks.filter((task) => task.date === selectedDate).sort(compareTasks),
-    [selectedDate, tasks],
+  const [settings, setSettings] = useState<PlannerSettings>(() => loadSettings())
+  const [categories, setCategories] = useState<PlannerCategory[]>(() => loadCategories())
+  const [tasks, setTasks] = useState<PlannerTaskItem[]>(() =>
+    pruneExpiredTasks(loadTasks(), loadSettings().completedTaskRetentionDays),
   )
+  const [notes, setNotes] = useState(() => loadNotes())
+  const [taskDraft, setTaskDraft] = useState<TaskDraft>(() => createEmptyDraft(dateKey(today()), loadCategories()[0].title))
+  const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilter>('open')
+  const [taskSpecialFilter, setTaskSpecialFilter] = useState<TaskSpecialFilter>('all')
+  const [categoryFilter, setCategoryFilter] = useState('All')
+  const [visibleMonth, setVisibleMonth] = useState(() => new Date(today().getFullYear(), today().getMonth(), 1))
+  const [selectedDate, setSelectedDate] = useState(dateKey(today()))
+  const [scopeDialog, setScopeDialog] = useState<ScopeDialogState | null>(null)
+  const [editing, setEditing] = useState<EditingState | null>(null)
+  const [aiCredits, setAiCredits] = useState(() => loadAiCredits())
+  const [purchaseHistory, setPurchaseHistory] = useState<PurchaseRecord[]>(() => loadPurchases())
+  const [aiSuggestions, setAiSuggestions] = useState<AiSuggestion[]>([])
+  const [aiStatus, setAiStatus] = useState('AI import is mocked for MVP and structured for a Netlify Function.')
+  const [aiPendingCost, setAiPendingCost] = useState(10)
 
-  const filteredTasks = useMemo(() => {
-    const visibleTasks = tasks.filter((task) => {
-      if (taskFilter === 'Open') return task.done === false
-      if (taskFilter === 'Done') return task.done
-      return true
-    })
-    return visibleTasks.sort(compareTasks)
-  }, [taskFilter, tasks])
-
-  const calendarDays = useMemo(() => buildCalendarDays(visibleMonth), [visibleMonth])
+  useEffect(() => saveTasks(tasks), [tasks])
+  useEffect(() => saveNotes(notes), [notes])
+  useEffect(() => saveCategories(categories), [categories])
+  useEffect(() => saveSettings(settings), [settings])
+  useEffect(() => saveAiCredits(aiCredits), [aiCredits])
+  useEffect(() => savePurchases(purchaseHistory), [purchaseHistory])
 
   useEffect(() => {
-    localStorage.setItem(tasksStorageKey, JSON.stringify(tasks))
-  }, [tasks])
+    document.documentElement.dataset.theme = settings.themeMode
+  }, [settings.themeMode])
 
-  function addTask(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const title = draft.title.trim()
-    if (title.length === 0) return
+  const openTasks = tasks.filter((task) => !task.isCompleted)
+  const completedTasks = tasks.filter((task) => task.isCompleted)
+  const dueTodayTasks = sortTasks(openTasks.filter(isDueToday))
+  const overdueTasks = sortTasks(openTasks.filter((task) => isOverdue(task)))
+  const upcomingTasks = sortTasks(openTasks.filter((task) => task.deadline !== null && !isDueToday(task) && !isOverdue(task))).slice(0, 8)
+  const filteredTasks = useMemo(
+    () => filterTasks(tasks, taskStatusFilter, taskSpecialFilter, categoryFilter),
+    [categoryFilter, taskSpecialFilter, taskStatusFilter, tasks],
+  )
+  const selectedDayTasks = useMemo(
+    () => sortTasks(tasks.filter((task) => task.deadline !== null && dateKey(new Date(task.deadline)) === selectedDate)),
+    [selectedDate, tasks],
+  )
+  const calendarDays = useMemo(() => buildMonthGrid(visibleMonth), [visibleMonth])
 
-    setTasks((currentTasks) => [
-      ...currentTasks,
-      {
-        ...draft,
-        id: crypto.randomUUID(),
-        title,
-        done: false,
-      },
-    ])
-    setDraft(createEmptyDraft(draft.date))
+  const updateSettings = (patch: Partial<PlannerSettings>) => {
+    setSettings((current) => ({ ...current, ...patch }))
+    if (patch.completedTaskRetentionDays !== undefined) {
+      setTasks((current) => pruneExpiredTasks(current, patch.completedTaskRetentionDays ?? settings.completedTaskRetentionDays))
+    }
+  }
+
+  function addTasks(draft: TaskDraft) {
+    const createdTasks = tasksFromDraft(draft)
+    if (createdTasks.length === 0) return
+    setTasks((current) => sortTasks([...current, ...createdTasks]))
+    const trimmedNote = draft.note.trim()
+    if (trimmedNote.length > 0) {
+      setNotes((current) => ({
+        ...current,
+        ...Object.fromEntries(createdTasks.map((task) => [task.id, trimmedNote])),
+      }))
+    }
+    setTaskDraft(createEmptyDraft(draft.deadlineDate, categories[0]?.title ?? 'General'))
   }
 
   function toggleTask(taskId: string) {
-    setTasks((currentTasks) =>
-      currentTasks.map((task) => (task.id === taskId ? { ...task, done: !task.done } : task)),
+    setTasks((current) => current.map((task) => (task.id === taskId ? toggleTaskCompletion(task) : task)))
+  }
+
+  function requestEdit(task: PlannerTaskItem) {
+    if (task.seriesID !== null || hasLaterRepeats(tasks, task)) {
+      setScopeDialog({ action: 'edit', task })
+      return
+    }
+    setEditing({ task, draft: draftFromTask(task, notes[task.id] ?? ''), scope: 'onlyThisTask' })
+  }
+
+  function requestDelete(task: PlannerTaskItem) {
+    if (task.seriesID !== null || hasLaterRepeats(tasks, task)) {
+      setScopeDialog({ action: 'delete', task })
+      return
+    }
+    setTasks((current) => current.filter((candidate) => candidate.id !== task.id))
+  }
+
+  function applyScope(scope: EditScope) {
+    if (scopeDialog === null) return
+    if (scopeDialog.action === 'delete') {
+      setTasks((current) => deleteTaskSeries(current, scopeDialog.task, scope))
+      setScopeDialog(null)
+      return
+    }
+    setEditing({
+      task: scopeDialog.task,
+      draft: draftFromTask(scopeDialog.task, notes[scopeDialog.task.id] ?? ''),
+      scope,
+    })
+    setScopeDialog(null)
+  }
+
+  function saveEdit(draft: TaskDraft) {
+    if (editing === null) return
+    setTasks((current) => updateTaskSeries(current, editing.task, draft, editing.scope))
+    setNotes((current) => {
+      const next = { ...current }
+      const trimmed = draft.note.trim()
+      if (trimmed.length === 0) delete next[editing.task.id]
+      else next[editing.task.id] = trimmed
+      return next
+    })
+    setEditing(null)
+  }
+
+  function selectCalendarDate(nextDate: string) {
+    setSelectedDate(nextDate)
+    setTaskDraft((current) => ({
+      ...current,
+      usesDeadline: true,
+      deadlineDate: nextDate,
+      startDate: nextDate,
+      repeatEndDate: current.repeatEndDate < nextDate ? nextDate : current.repeatEndDate,
+    }))
+  }
+
+  function addCategory(category: PlannerCategory) {
+    if (categories.length >= 8) return
+    setCategories((current) => [...current, category])
+  }
+
+  function updateCategory(category: PlannerCategory) {
+    setCategories((current) => current.map((item) => (item.id === category.id ? category : item)))
+  }
+
+  function deleteCategory(category: PlannerCategory) {
+    if (category.isDefault) return
+    setCategories((current) => current.filter((item) => item.id !== category.id))
+    setTasks((current) =>
+      current.map((task) =>
+        task.categoryTitle === category.title ? { ...task, categoryTitle: defaultCategories[0].title } : task,
+      ),
     )
   }
 
-  function deleteTask(taskId: string) {
-    setTasks((currentTasks) => currentTasks.filter((task) => task.id !== taskId))
+  function buyCredits(pack: (typeof creditPacks)[number]) {
+    const record = {
+      id: crypto.randomUUID(),
+      label: pack.label,
+      price: pack.price,
+      credits: pack.credits,
+      createdAt: new Date().toISOString(),
+    }
+    setAiCredits((current) => current + pack.credits)
+    setPurchaseHistory((current) => [record, ...current])
+    setAiStatus(`Added ${pack.credits} credits locally. Stripe Checkout will replace this MVP action.`)
   }
 
-  function selectCalendarDate(dateKey: string) {
-    setSelectedDate(dateKey)
-    setDraft((currentDraft) => ({ ...currentDraft, date: dateKey }))
+  function mockAiImport(kind: 'photo' | 'pdf' | 'cleanup' | 'dayPlan') {
+    const cost = kind === 'photo' ? 10 : kind === 'pdf' ? 18 : kind === 'cleanup' ? 15 : 8
+    setAiPendingCost(cost)
+    if (aiCredits < cost) {
+      setAiStatus(`Not enough credits. This action needs ${cost} credits.`)
+      return
+    }
+    const baseDate = dateKey(today())
+    const suggestions: AiSuggestion[] = [
+      {
+        id: crypto.randomUUID(),
+        title: kind === 'dayPlan' ? "Review today's highest priority work" : 'Review imported assignment dates',
+        categoryTitle: categories[0]?.title ?? 'General',
+        deadlineDate: baseDate,
+        deadlineTime: '16:00',
+        selected: true,
+      },
+      {
+        id: crypto.randomUUID(),
+        title: kind === 'pdf' ? 'Extract course outline milestones' : 'Confirm schedule conflicts',
+        categoryTitle: categories[0]?.title ?? 'General',
+        deadlineDate: dateKey(new Date(today().getFullYear(), today().getMonth(), today().getDate() + 2)),
+        deadlineTime: '12:00',
+        selected: true,
+      },
+    ]
+    setAiSuggestions(suggestions)
+    setAiStatus('Review the extracted suggestions before adding them. Credits deduct after confirmation.')
   }
 
-  function changeMonth(direction: -1 | 1) {
-    setVisibleMonth(
-      (currentMonth) => new Date(currentMonth.getFullYear(), currentMonth.getMonth() + direction, 1),
+  function confirmAiSuggestions() {
+    const selected = aiSuggestions.filter((suggestion) => suggestion.selected)
+    if (selected.length === 0) {
+      setAiStatus('Select at least one suggestion to add.')
+      return
+    }
+    const importedTasks = selected.flatMap((suggestion) =>
+      tasksFromDraft({
+        ...createEmptyDraft(suggestion.deadlineDate, suggestion.categoryTitle),
+        title: suggestion.title,
+        hasSpecificTime: true,
+        deadlineTime: suggestion.deadlineTime,
+      }),
     )
+    setTasks((current) => sortTasks([...current, ...importedTasks]))
+    setAiCredits((current) => Math.max(0, current - aiPendingCost))
+    setAiSuggestions([])
+    setAiStatus(`Added ${importedTasks.length} task${importedTasks.length === 1 ? '' : 's'} and used ${aiPendingCost} credits.`)
   }
 
   function renderPage() {
@@ -230,222 +320,491 @@ function App() {
       case 'dashboard':
         return (
           <DashboardPage
+            settings={settings}
+            tasks={tasks}
+            categories={categories}
+            notes={notes}
             dueTodayTasks={dueTodayTasks}
             overdueTasks={overdueTasks}
             upcomingTasks={upcomingTasks}
             openCount={openTasks.length}
-            doneCount={doneTasks.length}
-            onOpenCalendar={(dateKey) => {
-              setActivePage('calendar')
-              selectCalendarDate(dateKey)
-            }}
+            completedCount={completedTasks.length}
+            onSettingsChange={updateSettings}
             onToggleTask={toggleTask}
+            onEditTask={requestEdit}
+            onDeleteTask={requestDelete}
+            onOpenCalendar={(nextDate) => {
+              setActivePage('calendar')
+              selectCalendarDate(nextDate)
+            }}
+          />
+        )
+      case 'tasklist':
+        return (
+          <TasklistPage
+            categories={categories}
+            settings={settings}
+            draft={taskDraft}
+            filteredTasks={filteredTasks}
+            notes={notes}
+            statusFilter={taskStatusFilter}
+            specialFilter={taskSpecialFilter}
+            categoryFilter={categoryFilter}
+            onDraftChange={setTaskDraft}
+            onAddTasks={addTasks}
+            onStatusFilterChange={setTaskStatusFilter}
+            onSpecialFilterChange={setTaskSpecialFilter}
+            onCategoryFilterChange={setCategoryFilter}
+            onToggleTask={toggleTask}
+            onEditTask={requestEdit}
+            onDeleteTask={requestDelete}
+            onOpenCalendar={(nextDate) => {
+              setActivePage('calendar')
+              selectCalendarDate(nextDate)
+            }}
           />
         )
       case 'calendar':
         return (
           <CalendarPage
-            calendarDays={calendarDays}
             visibleMonth={visibleMonth}
+            calendarDays={calendarDays}
             selectedDate={selectedDate}
-            selectedTasks={selectedTasks}
+            selectedDayTasks={selectedDayTasks}
             tasks={tasks}
-            draft={draft}
-            onDraftChange={setDraft}
-            onAddTask={addTask}
-            onChangeMonth={changeMonth}
+            categories={categories}
+            settings={settings}
+            notes={notes}
+            draft={taskDraft}
+            onDraftChange={setTaskDraft}
+            onAddTasks={addTasks}
+            onMonthChange={(direction) => setVisibleMonth((current) => addMonths(current, direction))}
             onSelectDate={selectCalendarDate}
             onToggleTask={toggleTask}
-            onDeleteTask={deleteTask}
-          />
-        )
-      case 'tasks':
-        return (
-          <TasksPage
-            filteredTasks={filteredTasks}
-            taskFilter={taskFilter}
-            draft={draft}
-            onDraftChange={setDraft}
-            onTaskFilterChange={setTaskFilter}
-            onAddTask={addTask}
-            onToggleTask={toggleTask}
-            onDeleteTask={deleteTask}
-            onOpenCalendar={(dateKey) => {
-              setActivePage('calendar')
-              selectCalendarDate(dateKey)
-            }}
+            onEditTask={requestEdit}
+            onDeleteTask={requestDelete}
           />
         )
       case 'ai':
-        return <AiCreditsPage />
+        return (
+          <AiPage
+            credits={aiCredits}
+            purchaseHistory={purchaseHistory}
+            suggestions={aiSuggestions}
+            status={aiStatus}
+            pendingCost={aiPendingCost}
+            onBuyCredits={buyCredits}
+            onMockImport={mockAiImport}
+            onSuggestionChange={setAiSuggestions}
+            onConfirmSuggestions={confirmAiSuggestions}
+          />
+        )
       case 'settings':
         return (
           <SettingsPage
-            remindersEnabled={remindersEnabled}
-            emailEnabled={emailEnabled}
-            pushEnabled={pushEnabled}
-            onRemindersChange={setRemindersEnabled}
-            onEmailChange={setEmailEnabled}
-            onPushChange={setPushEnabled}
+            settings={settings}
+            categories={categories}
+            credits={aiCredits}
+            purchaseHistory={purchaseHistory}
+            onSettingsChange={updateSettings}
+            onAddCategory={addCategory}
+            onUpdateCategory={updateCategory}
+            onDeleteCategory={deleteCategory}
           />
         )
     }
   }
 
   return (
-    <main className="app-frame">
-      <aside className="app-nav" aria-label="Main navigation">
+    <main className={`app-frame page-${activePage}`}>
+      <aside className="app-sidebar" aria-label="Main navigation">
         <div className="brand">
           <div className="brand-mark">FG</div>
           <div>
             <strong>FocusGuard</strong>
-            <span>Web planner</span>
+            <span>Planner workspace</span>
           </div>
         </div>
 
         <nav className="nav-list">
           {navItems.map((item) => (
             <button
-              className={activePage === item.page ? 'active' : ''}
+              className={activePage === item.page ? `active ${item.accent}` : item.accent}
               type="button"
               key={item.page}
               onClick={() => setActivePage(item.page)}
             >
+              <span className="nav-dot" />
               {item.label}
             </button>
           ))}
         </nav>
 
-        <section className="nav-summary">
-          <p className="label">Today</p>
-          <strong>{dueTodayTasks.length} open</strong>
-          <span>{overdueTasks.length} overdue</span>
-        </section>
+        <div className="sidebar-summary">
+          <span>Today</span>
+          <strong>{dueTodayTasks.length} due</strong>
+          <small>{overdueTasks.length} overdue</small>
+        </div>
       </aside>
 
       <section className="app-content">{renderPage()}</section>
+
+      <nav className="mobile-tabbar" aria-label="Mobile navigation">
+        {navItems.map((item) => (
+          <button
+            className={activePage === item.page ? `active ${item.accent}` : item.accent}
+            type="button"
+            key={item.page}
+            onClick={() => setActivePage(item.page)}
+          >
+            <span className="nav-dot" />
+            {item.label}
+          </button>
+        ))}
+      </nav>
+
+      {scopeDialog ? (
+        <ScopeDialog
+          task={scopeDialog.task}
+          action={scopeDialog.action}
+          onSelect={applyScope}
+          onClose={() => setScopeDialog(null)}
+        />
+      ) : null}
+
+      {editing ? (
+        <TaskEditorDialog
+          editing={editing}
+          categories={categories}
+          settings={settings}
+          onSave={saveEdit}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
     </main>
   )
 }
 
 function DashboardPage({
+  settings,
+  tasks,
+  categories,
+  notes,
   dueTodayTasks,
   overdueTasks,
   upcomingTasks,
   openCount,
-  doneCount,
-  onOpenCalendar,
+  completedCount,
+  onSettingsChange,
   onToggleTask,
+  onEditTask,
+  onDeleteTask,
+  onOpenCalendar,
 }: {
-  dueTodayTasks: Task[]
-  overdueTasks: Task[]
-  upcomingTasks: Task[]
+  settings: PlannerSettings
+  tasks: PlannerTaskItem[]
+  categories: PlannerCategory[]
+  notes: Record<string, string>
+  dueTodayTasks: PlannerTaskItem[]
+  overdueTasks: PlannerTaskItem[]
+  upcomingTasks: PlannerTaskItem[]
   openCount: number
-  doneCount: number
-  onOpenCalendar: (dateKey: string) => void
+  completedCount: number
+  onSettingsChange: (patch: Partial<PlannerSettings>) => void
   onToggleTask: (taskId: string) => void
+  onEditTask: (task: PlannerTaskItem) => void
+  onDeleteTask: (task: PlannerTaskItem) => void
+  onOpenCalendar: (date: string) => void
 }) {
+  const notebookTasks = notebookFilteredTasks(tasks, settings.notebookSort)
+  const oneTimeTasks = notebookTasks.filter((task) => task.seriesID === null)
+  const recurringTasks = notebookTasks.filter((task) => task.seriesID !== null)
+
   return (
     <div className="page">
       <PageHeader
         eyebrow="Dashboard"
-        title="Today at a glance"
-        action={<StatusPill>{formatDate(todayKey)}</StatusPill>}
+        title="Today"
+        detail={homeDateFormatter.format(today())}
       />
 
       <section className="metric-strip" aria-label="Planner summary">
         <MetricCard label="Open tasks" value={openCount} />
-        <MetricCard label="Finished" value={doneCount} />
+        <MetricCard label="Completed" value={completedCount} />
         <MetricCard label="Due today" value={dueTodayTasks.length} />
         <MetricCard label="Overdue" value={overdueTasks.length} tone={overdueTasks.length > 0 ? 'danger' : 'normal'} />
       </section>
 
       <section className="dashboard-grid">
-        <div className="surface">
-          <SectionHeader title="Due today" detail={`${dueTodayTasks.length} tasks`} />
+        {overdueTasks.length > 0 ? (
+          <Panel title="Overdue" detail={`${overdueTasks.length} needs attention`} tone="danger">
+            <TaskStack
+              tasks={overdueTasks}
+              categories={categories}
+              settings={settings}
+              notes={notes}
+              onToggleTask={onToggleTask}
+              onEditTask={onEditTask}
+              onDeleteTask={onDeleteTask}
+              onOpenCalendar={onOpenCalendar}
+            />
+          </Panel>
+        ) : null}
+
+        <Panel title="Due today" detail={`${dueTodayTasks.length} tasks`}>
           <TaskStack
             tasks={dueTodayTasks}
-            emptyTitle="No open tasks today"
-            emptyDetail="Your day is clear."
+            categories={categories}
+            settings={settings}
+            notes={notes}
+            emptyTitle="No open tasks due today"
+            emptyDetail="Add a task with today as its deadline when something comes up."
             onToggleTask={onToggleTask}
+            onEditTask={onEditTask}
+            onDeleteTask={onDeleteTask}
             onOpenCalendar={onOpenCalendar}
           />
-        </div>
+        </Panel>
 
-        <div className="surface">
-          <SectionHeader title="Upcoming" detail="Next deadlines" />
+        <Panel title="Upcoming" detail="Next deadlines">
           <TaskStack
             tasks={upcomingTasks}
-            emptyTitle="No upcoming tasks"
-            emptyDetail="Add tasks from Calendar or Tasks."
+            categories={categories}
+            settings={settings}
+            notes={notes}
+            emptyTitle="No scheduled upcoming work"
+            emptyDetail="Tasks with deadlines will appear here after today."
             onToggleTask={onToggleTask}
+            onEditTask={onEditTask}
+            onDeleteTask={onDeleteTask}
             onOpenCalendar={onOpenCalendar}
           />
-        </div>
+        </Panel>
 
-        <div className="surface wide">
-          <SectionHeader title="AI credits" detail="Paid usage only" />
-          <div className="credit-overview">
+        <section className={`notebook-panel ${settings.notebookFontStyle} ${settings.notebookFontSize}`}>
+          <div className="notebook-toolbar">
             <div>
-              <p className="label">Minimum purchase</p>
-              <strong>$5</strong>
-              <span>Credits are required before AI features run.</span>
+              <p className="eyebrow">Notebook overview</p>
+              <h2>{homeDateFormatter.format(today())}</h2>
             </div>
-            <div>
-              <p className="label">Margin control</p>
-              <strong>Hard caps</strong>
-              <span>Each AI action will have a max input size and fixed credit cost.</span>
-            </div>
-            <div>
-              <p className="label">Free users</p>
-              <strong>Manual planner</strong>
-              <span>Core calendar and tasks remain usable without API spend.</span>
+            <div className="control-cluster">
+              <SelectField
+                label="Sort"
+                value={settings.notebookSort}
+                onChange={(value) => onSettingsChange({ notebookSort: value as NotebookSort })}
+                options={[
+                  ['dateAscending', 'Date ascending'],
+                  ['dateDescending', 'Date descending'],
+                  ['category', 'Category'],
+                  ['today', 'Today'],
+                  ['tomorrow', 'Tomorrow'],
+                  ['thisWeek', 'This week'],
+                  ['nextWeek', 'Next week'],
+                  ['thisMonth', 'This month'],
+                  ['nextMonth', 'Next month'],
+                ]}
+              />
+              <SelectField
+                label="Font"
+                value={settings.notebookFontStyle}
+                onChange={(value) => onSettingsChange({ notebookFontStyle: value as NotebookFontStyle })}
+                options={[
+                  ['system', 'System'],
+                  ['rounded', 'Rounded'],
+                  ['serif', 'Serif'],
+                ]}
+              />
+              <SelectField
+                label="Size"
+                value={settings.notebookFontSize}
+                onChange={(value) => onSettingsChange({ notebookFontSize: value as NotebookFontSize })}
+                options={[
+                  ['compact', 'Compact'],
+                  ['medium', 'Medium'],
+                  ['large', 'Large'],
+                ]}
+              />
             </div>
           </div>
-        </div>
+
+          <NotebookSection
+            title="One-Time"
+            tasks={oneTimeTasks}
+            categories={categories}
+            settings={settings}
+            notes={notes}
+            emptyTitle="No one-time tasks in this view"
+            onToggleTask={onToggleTask}
+            onEditTask={onEditTask}
+            onDeleteTask={onDeleteTask}
+          />
+          <NotebookSection
+            title="Recurring"
+            tasks={recurringTasks}
+            categories={categories}
+            settings={settings}
+            notes={notes}
+            emptyTitle="No recurring tasks in this view"
+            onToggleTask={onToggleTask}
+            onEditTask={onEditTask}
+            onDeleteTask={onDeleteTask}
+          />
+        </section>
+      </section>
+    </div>
+  )
+}
+
+function TasklistPage({
+  categories,
+  settings,
+  draft,
+  filteredTasks,
+  notes,
+  statusFilter,
+  specialFilter,
+  categoryFilter,
+  onDraftChange,
+  onAddTasks,
+  onStatusFilterChange,
+  onSpecialFilterChange,
+  onCategoryFilterChange,
+  onToggleTask,
+  onEditTask,
+  onDeleteTask,
+  onOpenCalendar,
+}: {
+  categories: PlannerCategory[]
+  settings: PlannerSettings
+  draft: TaskDraft
+  filteredTasks: PlannerTaskItem[]
+  notes: Record<string, string>
+  statusFilter: TaskStatusFilter
+  specialFilter: TaskSpecialFilter
+  categoryFilter: string
+  onDraftChange: (draft: TaskDraft) => void
+  onAddTasks: (draft: TaskDraft) => void
+  onStatusFilterChange: (filter: TaskStatusFilter) => void
+  onSpecialFilterChange: (filter: TaskSpecialFilter) => void
+  onCategoryFilterChange: (filter: string) => void
+  onToggleTask: (taskId: string) => void
+  onEditTask: (task: PlannerTaskItem) => void
+  onDeleteTask: (task: PlannerTaskItem) => void
+  onOpenCalendar: (date: string) => void
+}) {
+  return (
+    <div className="page">
+      <PageHeader eyebrow="Tasklist" title="Task manager" detail={`${filteredTasks.length} shown`} />
+
+      <section className="tasks-layout">
+        <Panel title="Add task" detail="Manual planning">
+          <TaskForm
+            draft={draft}
+            categories={categories}
+            settings={settings}
+            submitLabel={draft.repeats ? 'Add repeats' : 'Add task'}
+            onDraftChange={onDraftChange}
+            onSubmit={onAddTasks}
+          />
+        </Panel>
+
+        <Panel title="Tasks" detail="Create, edit, complete, delete" className="task-browser">
+          <div className="filters-bar">
+            <Segmented
+              value={statusFilter}
+              onChange={(value) => onStatusFilterChange(value as TaskStatusFilter)}
+              items={[
+                ['open', 'Open'],
+                ['completed', 'Completed'],
+                ['all', 'All'],
+              ]}
+            />
+            <SelectField
+              label="Filter"
+              value={specialFilter}
+              onChange={(value) => onSpecialFilterChange(value as TaskSpecialFilter)}
+              options={[
+                ['all', 'All tasks'],
+                ['dueToday', 'Due today'],
+                ['overdue', 'Overdue'],
+                ['noDeadline', 'No deadline'],
+              ]}
+            />
+            {settings.categoriesEnabled ? (
+              <SelectField
+                label="Category"
+                value={categoryFilter}
+                onChange={onCategoryFilterChange}
+                options={[['All', 'All categories'], ...categories.map((category) => [category.title, category.title] as const)]}
+              />
+            ) : null}
+          </div>
+
+          <TaskStack
+            tasks={filteredTasks}
+            categories={categories}
+            settings={settings}
+            notes={notes}
+            emptyTitle="No tasks match these filters"
+            emptyDetail="Change the filters or add a task from the form."
+            onToggleTask={onToggleTask}
+            onEditTask={onEditTask}
+            onDeleteTask={onDeleteTask}
+            onOpenCalendar={onOpenCalendar}
+          />
+        </Panel>
       </section>
     </div>
   )
 }
 
 function CalendarPage({
-  calendarDays,
   visibleMonth,
+  calendarDays,
   selectedDate,
-  selectedTasks,
+  selectedDayTasks,
   tasks,
+  categories,
+  settings,
+  notes,
   draft,
   onDraftChange,
-  onAddTask,
-  onChangeMonth,
+  onAddTasks,
+  onMonthChange,
   onSelectDate,
   onToggleTask,
+  onEditTask,
   onDeleteTask,
 }: {
-  calendarDays: Date[]
   visibleMonth: Date
+  calendarDays: Date[]
   selectedDate: string
-  selectedTasks: Task[]
-  tasks: Task[]
+  selectedDayTasks: PlannerTaskItem[]
+  tasks: PlannerTaskItem[]
+  categories: PlannerCategory[]
+  settings: PlannerSettings
+  notes: Record<string, string>
   draft: TaskDraft
   onDraftChange: (draft: TaskDraft) => void
-  onAddTask: (event: FormEvent<HTMLFormElement>) => void
-  onChangeMonth: (direction: -1 | 1) => void
-  onSelectDate: (dateKey: string) => void
+  onAddTasks: (draft: TaskDraft) => void
+  onMonthChange: (direction: -1 | 1) => void
+  onSelectDate: (date: string) => void
   onToggleTask: (taskId: string) => void
-  onDeleteTask: (taskId: string) => void
+  onEditTask: (task: PlannerTaskItem) => void
+  onDeleteTask: (task: PlannerTaskItem) => void
 }) {
   return (
     <div className="page">
       <PageHeader
         eyebrow={`${visibleMonth.getFullYear()}`}
         title={monthFormatter.format(visibleMonth)}
+        detail="Month calendar"
         action={
           <div className="month-controls">
-            <button type="button" onClick={() => onChangeMonth(-1)} aria-label="Previous month">
-              Back
+            <button type="button" onClick={() => onMonthChange(-1)} aria-label="Previous month">
+              Previous
             </button>
-            <button type="button" onClick={() => onChangeMonth(1)} aria-label="Next month">
+            <button type="button" onClick={() => onMonthChange(1)} aria-label="Next month">
               Next
             </button>
           </div>
@@ -455,41 +814,42 @@ function CalendarPage({
       <section className="calendar-workspace">
         <div className="calendar-surface">
           <div className="weekday-row" aria-hidden="true">
-            {weekdayLabels.map((weekday) => (
+            {weekdays.map((weekday) => (
               <span key={weekday}>{weekday}</span>
             ))}
           </div>
-
           <div className="calendar-grid">
-            {calendarDays.map((date) => {
-              const dateKey = toDateInputValue(date)
-              const dayTasks = tasks.filter((task) => task.date === dateKey).sort(compareTasks)
-              const isSelected = dateKey === selectedDate
-              const isToday = dateKey === todayKey
-              const isCurrentMonth = date.getMonth() === visibleMonth.getMonth()
-
+            {calendarDays.map((day) => {
+              const key = dateKey(day)
+              const dayTasks = sortTasks(tasks.filter((task) => task.deadline !== null && dateKey(new Date(task.deadline)) === key))
+              const isSelected = key === selectedDate
+              const isToday = key === dateKey(today())
+              const isOutside = day.getMonth() !== visibleMonth.getMonth()
               return (
                 <button
-                  type="button"
                   className={[
                     'day-cell',
                     isSelected ? 'selected' : '',
                     isToday ? 'today' : '',
-                    isCurrentMonth ? '' : 'outside-month',
+                    isOutside ? 'outside-month' : '',
                   ].join(' ')}
-                  key={dateKey}
-                  onClick={() => onSelectDate(dateKey)}
+                  type="button"
+                  key={key}
+                  onClick={() => onSelectDate(key)}
                 >
                   <span className="day-topline">
-                    <span className="mobile-weekday">{shortWeekdayLabels[date.getDay()]}</span>
-                    <span className="day-number">{date.getDate()}</span>
+                    <span className="mobile-weekday">{shortWeekdays[day.getDay()]}</span>
+                    <span className="day-number">{day.getDate()}</span>
                   </span>
                   <span className="task-chip-stack">
-                    {dayTasks.slice(0, 3).map((task) => (
-                      <span className={`task-chip ${categoryMeta[task.category].tone}`} key={task.id}>
-                        {task.title.slice(0, 4)}
-                      </span>
-                    ))}
+                    {dayTasks.slice(0, 3).map((task) => {
+                      const category = categoryForTask(categories, task)
+                      return (
+                        <span className="task-chip" style={{ backgroundColor: category.color }} key={task.id}>
+                          {calendarChipLabel(task.title)}
+                        </span>
+                      )
+                    })}
                     {dayTasks.length > 3 ? <span className="task-chip overflow">+{dayTasks.length - 3}</span> : null}
                   </span>
                 </button>
@@ -498,154 +858,697 @@ function CalendarPage({
           </div>
         </div>
 
-        <aside className="selected-day">
-          <SectionHeader title={fullDateFormatter.format(parseDateValue(selectedDate))} detail={`${selectedTasks.length} tasks`} />
-          <TaskForm draft={draft} onDraftChange={onDraftChange} onAddTask={onAddTask} />
-          <TaskStack
-            tasks={selectedTasks}
-            emptyTitle="Nothing scheduled"
-            emptyDetail="Add a task to place it on this date."
-            onToggleTask={onToggleTask}
-            onDeleteTask={onDeleteTask}
-          />
+        <aside className="selected-day-panel">
+          <Panel title={fullDateFormatter.format(parseDateKey(selectedDate))} detail={`${selectedDayTasks.length} tasks`}>
+            <TaskForm
+              draft={draft}
+              categories={categories}
+              settings={settings}
+              compact
+              submitLabel="Add to date"
+              onDraftChange={onDraftChange}
+              onSubmit={onAddTasks}
+            />
+            <TaskStack
+              tasks={selectedDayTasks}
+              categories={categories}
+              settings={settings}
+              notes={notes}
+              emptyTitle="Nothing scheduled"
+              emptyDetail="Use the form above to add a task to this date."
+              onToggleTask={onToggleTask}
+              onEditTask={onEditTask}
+              onDeleteTask={onDeleteTask}
+            />
+          </Panel>
         </aside>
       </section>
     </div>
   )
 }
 
-function TasksPage({
-  filteredTasks,
-  taskFilter,
-  draft,
-  onDraftChange,
-  onTaskFilterChange,
-  onAddTask,
-  onToggleTask,
-  onDeleteTask,
-  onOpenCalendar,
+function AiPage({
+  credits,
+  purchaseHistory,
+  suggestions,
+  status,
+  pendingCost,
+  onBuyCredits,
+  onMockImport,
+  onSuggestionChange,
+  onConfirmSuggestions,
 }: {
-  filteredTasks: Task[]
-  taskFilter: 'Open' | 'Done' | 'All'
-  draft: TaskDraft
-  onDraftChange: (draft: TaskDraft) => void
-  onTaskFilterChange: (filter: 'Open' | 'Done' | 'All') => void
-  onAddTask: (event: FormEvent<HTMLFormElement>) => void
-  onToggleTask: (taskId: string) => void
-  onDeleteTask: (taskId: string) => void
-  onOpenCalendar: (dateKey: string) => void
+  credits: number
+  purchaseHistory: PurchaseRecord[]
+  suggestions: AiSuggestion[]
+  status: string
+  pendingCost: number
+  onBuyCredits: (pack: (typeof creditPacks)[number]) => void
+  onMockImport: (kind: 'photo' | 'pdf' | 'cleanup' | 'dayPlan') => void
+  onSuggestionChange: (suggestions: AiSuggestion[]) => void
+  onConfirmSuggestions: () => void
 }) {
   return (
     <div className="page">
-      <PageHeader
-        eyebrow="Tasks"
-        title="Task manager"
-        action={
-          <div className="segmented">
-            {(['Open', 'Done', 'All'] as const).map((filter) => (
-              <button
-                className={taskFilter === filter ? 'active' : ''}
-                type="button"
-                key={filter}
-                onClick={() => onTaskFilterChange(filter)}
-              >
-                {filter}
-              </button>
+      <PageHeader eyebrow="AI" title="Credits and import" detail={`${credits} credits available`} />
+
+      <section className="ai-grid">
+        <Panel title="Credit balance" detail="Paid AI only">
+          <div className="credit-balance">
+            <span>Current balance</span>
+            <strong>{credits}</strong>
+            <p>Free users get manual planning. AI actions require purchased credits and no browser-side OpenAI key.</p>
+          </div>
+        </Panel>
+
+        <Panel title="Buy credits" detail="$5 minimum" className="wide-panel">
+          <div className="pricing-grid">
+            {creditPacks.map((pack) => (
+              <article className="price-card" key={pack.label}>
+                <span>{pack.label}</span>
+                <strong>${pack.price}</strong>
+                <p>{pack.credits} credits</p>
+                <button type="button" onClick={() => onBuyCredits(pack)}>
+                  Stripe checkout later
+                </button>
+              </article>
             ))}
           </div>
-        }
-      />
+        </Panel>
 
-      <section className="tasks-layout">
-        <div className="surface">
-          <SectionHeader title="Add task" detail="Manual entry" />
-          <TaskForm draft={draft} onDraftChange={onDraftChange} onAddTask={onAddTask} />
-        </div>
+        <Panel title="AI import actions" detail="Mock backend response">
+          <div className="action-list">
+            <ActionButton title="Import screenshot/photo" detail="10 credits minimum" onClick={() => onMockImport('photo')} />
+            <ActionButton title="Import PDF" detail="Scales by file size/pages, capped" onClick={() => onMockImport('pdf')} />
+            <ActionButton title="Schedule cleanup" detail="15 credits" onClick={() => onMockImport('cleanup')} />
+            <ActionButton title="Day plan" detail="8 credits" onClick={() => onMockImport('dayPlan')} />
+          </div>
+          <StatusBlock>{status}</StatusBlock>
+        </Panel>
 
-        <div className="surface task-browser">
-          <SectionHeader title={`${taskFilter} tasks`} detail={`${filteredTasks.length} shown`} />
-          <TaskStack
-            tasks={filteredTasks}
-            emptyTitle="No tasks found"
-            emptyDetail="Change the filter or add a new task."
-            onToggleTask={onToggleTask}
-            onDeleteTask={onDeleteTask}
-            onOpenCalendar={onOpenCalendar}
-          />
-        </div>
-      </section>
-    </div>
-  )
-}
-
-function AiCreditsPage() {
-  return (
-    <div className="page">
-      <PageHeader eyebrow="AI Credits" title="Paid AI usage" action={<StatusPill>$5 minimum</StatusPill>} />
-
-      <section className="pricing-grid">
-        {creditPacks.map((pack) => (
-          <article className="price-card" key={pack.label}>
-            <div>
-              <p className="label">{pack.label}</p>
-              <strong>${pack.price}</strong>
-              <span>{pack.credits} credits</span>
+        <Panel title="Review suggestions" detail={`${pendingCost} credits on confirm`}>
+          {suggestions.length === 0 ? (
+            <EmptyState title="No suggestions waiting" detail="Run an import action to review extracted task suggestions before adding them." />
+          ) : (
+            <div className="suggestion-list">
+              {suggestions.map((suggestion) => (
+                <label className="suggestion-row" key={suggestion.id}>
+                  <input
+                    type="checkbox"
+                    checked={suggestion.selected}
+                    onChange={(event) =>
+                      onSuggestionChange(
+                        suggestions.map((item) =>
+                          item.id === suggestion.id ? { ...item, selected: event.target.checked } : item,
+                        ),
+                      )
+                    }
+                  />
+                  <span>
+                    <strong>{suggestion.title}</strong>
+                    <small>
+                      {shortDateFormatter.format(parseDateKey(suggestion.deadlineDate))} at {suggestion.deadlineTime}
+                    </small>
+                  </span>
+                </label>
+              ))}
+              <button className="primary-button" type="button" onClick={onConfirmSuggestions}>
+                Add selected tasks
+              </button>
             </div>
-            <p>{pack.description}</p>
-            <button type="button">Buy credits</button>
-          </article>
-        ))}
-      </section>
+          )}
+        </Panel>
 
-      <section className="surface">
-        <SectionHeader title="Credit rules" detail="Draft pricing model" />
-        <div className="rules-grid">
-          <RuleItem title="AI import" value="10 credits" detail="Turn pasted notes into dated tasks." />
-          <RuleItem title="Schedule cleanup" value="15 credits" detail="Rebalance a busy week without unlimited usage." />
-          <RuleItem title="Day plan" value="8 credits" detail="Generate a focused order for one day." />
-          <RuleItem title="Failed request" value="0 credits" detail="Credits should only be consumed after a successful response." />
-        </div>
+        <Panel title="Architecture" detail="Production path" className="wide-panel">
+          <div className="architecture-grid">
+            <RuleItem title="Browser" value="Calls serverless function" />
+            <RuleItem title="Function" value="Checks auth and credits" />
+            <RuleItem title="OpenAI" value="Server-side only" />
+            <RuleItem title="Credits" value="Deduct after accepted result" />
+          </div>
+        </Panel>
+
+        <Panel title="Payments" detail="Purchase history">
+          {purchaseHistory.length === 0 ? (
+            <EmptyState title="No local purchases yet" detail="MVP purchases are stored locally until Stripe Checkout is wired." />
+          ) : (
+            <div className="history-list">
+              {purchaseHistory.slice(0, 5).map((record) => (
+                <div className="history-row" key={record.id}>
+                  <span>{record.label}</span>
+                  <strong>
+                    ${record.price} / {record.credits}
+                  </strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
       </section>
     </div>
   )
 }
 
 function SettingsPage({
-  remindersEnabled,
-  emailEnabled,
-  pushEnabled,
-  onRemindersChange,
-  onEmailChange,
-  onPushChange,
+  settings,
+  categories,
+  credits,
+  purchaseHistory,
+  onSettingsChange,
+  onAddCategory,
+  onUpdateCategory,
+  onDeleteCategory,
 }: {
-  remindersEnabled: boolean
-  emailEnabled: boolean
-  pushEnabled: boolean
-  onRemindersChange: (value: boolean) => void
-  onEmailChange: (value: boolean) => void
-  onPushChange: (value: boolean) => void
+  settings: PlannerSettings
+  categories: PlannerCategory[]
+  credits: number
+  purchaseHistory: PurchaseRecord[]
+  onSettingsChange: (patch: Partial<PlannerSettings>) => void
+  onAddCategory: (category: PlannerCategory) => void
+  onUpdateCategory: (category: PlannerCategory) => void
+  onDeleteCategory: (category: PlannerCategory) => void
 }) {
+  const [categoryDraft, setCategoryDraft] = useState({
+    title: '',
+    symbol: 'tag.fill',
+    color: paletteOptions[0],
+  })
+
+  function submitCategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const title = categoryDraft.title.trim().slice(0, 32)
+    if (title.length === 0 || categories.length >= 8) return
+    onAddCategory({
+      id: crypto.randomUUID(),
+      title,
+      symbol: categoryDraft.symbol,
+      color: categoryDraft.color,
+      isDefault: false,
+    })
+    setCategoryDraft({ title: '', symbol: 'tag.fill', color: categoryDraft.color })
+  }
+
   return (
     <div className="page">
-      <PageHeader eyebrow="Settings" title="Preferences" />
+      <PageHeader eyebrow="Settings" title="Preferences" detail={settings.themeMode === 'system' ? 'System theme' : `${settings.themeMode} theme`} />
 
       <section className="settings-grid">
-        <div className="surface">
-          <SectionHeader title="Reminders" detail="Web-first delivery" />
-          <ToggleRow label="Enable reminders" checked={remindersEnabled} onChange={onRemindersChange} />
-          <ToggleRow label="Email reminders" checked={emailEnabled} onChange={onEmailChange} disabled={!remindersEnabled} />
-          <ToggleRow label="PWA push notifications" checked={pushEnabled} onChange={onPushChange} disabled={!remindersEnabled} />
-        </div>
-
-        <div className="surface">
-          <SectionHeader title="Deployment" detail="Netlify ready" />
-          <div className="deployment-list">
-            <StatusRow label="Frontend" value="React + Vite" />
-            <StatusRow label="Hosting" value="Netlify" />
-            <StatusRow label="Auth and data" value="Supabase later" />
-            <StatusRow label="Payments" value="Stripe Checkout later" />
+        <Panel title="Account" detail="Supabase later">
+          <div className="account-box">
+            <strong>Local profile</strong>
+            <span>Auth is intentionally not mocked as a real login. Supabase auth will own sessions, users, and server-checked credits.</span>
           </div>
-        </div>
+        </Panel>
+
+        <Panel title="Notifications" detail="Reminders">
+          <ToggleRow
+            label="Enable reminders"
+            checked={settings.notificationsEnabled}
+            onChange={(value) => onSettingsChange({ notificationsEnabled: value })}
+          />
+          <ToggleRow
+            label="Device feedback"
+            checked={settings.deviceFeedbackEnabled}
+            disabled={!settings.notificationsEnabled}
+            onChange={(value) => onSettingsChange({ deviceFeedbackEnabled: value })}
+          />
+          <ToggleRow
+            label="Due-time notification"
+            checked={settings.taskNotifyAtStart}
+            disabled={!settings.notificationsEnabled}
+            onChange={(value) => onSettingsChange({ taskNotifyAtStart: value })}
+          />
+          <ToggleRow
+            label="Email reminders"
+            checked={settings.emailReminders}
+            disabled={!settings.notificationsEnabled}
+            onChange={(value) => onSettingsChange({ emailReminders: value })}
+          />
+          <SelectField
+            label="Reminder 1"
+            value={settings.reminderOffset1}
+            onChange={(value) => onSettingsChange({ reminderOffset1: value as ReminderOffset })}
+            options={reminderOffsets.map((offset) => [offset, offset])}
+          />
+          <SelectField
+            label="Reminder 2"
+            value={settings.reminderOffset2}
+            onChange={(value) => onSettingsChange({ reminderOffset2: value as ReminderOffset })}
+            options={reminderOffsets.map((offset) => [offset, offset])}
+          />
+        </Panel>
+
+        <Panel title="Categories" detail={`${categories.length}/8`}>
+          <ToggleRow
+            label="Enable categories"
+            checked={settings.categoriesEnabled}
+            onChange={(value) => onSettingsChange({ categoriesEnabled: value })}
+          />
+          <form className="category-form" onSubmit={submitCategory}>
+            <input
+              aria-label="Category title"
+              placeholder="Category title"
+              value={categoryDraft.title}
+              onChange={(event) => setCategoryDraft((current) => ({ ...current, title: event.target.value }))}
+              maxLength={32}
+            />
+            <select
+              aria-label="Category symbol"
+              value={categoryDraft.symbol}
+              onChange={(event) => setCategoryDraft((current) => ({ ...current, symbol: event.target.value }))}
+            >
+              <option value="tag.fill">Tag</option>
+              <option value="book.fill">Book</option>
+              <option value="briefcase.fill">Work</option>
+              <option value="calendar">Calendar</option>
+            </select>
+            <div className="palette-row">
+              {paletteOptions.map((color) => (
+                <button
+                  className={categoryDraft.color === color ? 'selected' : ''}
+                  type="button"
+                  key={color}
+                  aria-label={`Use ${color}`}
+                  style={{ backgroundColor: color }}
+                  onClick={() => setCategoryDraft((current) => ({ ...current, color }))}
+                />
+              ))}
+            </div>
+            <button className="primary-button" type="submit" disabled={categories.length >= 8}>
+              Add category
+            </button>
+          </form>
+          <div className="category-list">
+            {categories.map((category) => (
+              <div className="category-row" key={category.id}>
+                <span className="category-swatch" style={{ backgroundColor: category.color }} />
+                <input
+                  aria-label={`${category.title} title`}
+                  value={category.title}
+                  disabled={category.isDefault}
+                  onChange={(event) => onUpdateCategory({ ...category, title: event.target.value.slice(0, 32) })}
+                />
+                <input
+                  aria-label={`${category.title} color`}
+                  type="color"
+                  value={category.color}
+                  onChange={(event) => onUpdateCategory({ ...category, color: event.target.value })}
+                />
+                <button type="button" disabled={category.isDefault} onClick={() => onDeleteCategory(category)}>
+                  Delete
+                </button>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Task cleanup" detail="Completed retention">
+          <SelectField
+            label="Keep completed tasks"
+            value={String(settings.completedTaskRetentionDays)}
+            onChange={(value) =>
+              onSettingsChange({ completedTaskRetentionDays: Number(value) as CompletedTaskRetentionDays })
+            }
+            options={[
+              ['7', '7 days'],
+              ['30', '30 days'],
+              ['60', '60 days'],
+              ['90', '90 days'],
+              ['-1', 'Never'],
+            ]}
+          />
+          <StatusBlock>Completed tasks are pruned automatically unless retention is set to Never.</StatusBlock>
+        </Panel>
+
+        <Panel title="Appearance" detail="Theme">
+          <Segmented
+            value={settings.themeMode}
+            onChange={(value) => onSettingsChange({ themeMode: value as PlannerSettings['themeMode'] })}
+            items={[
+              ['system', 'System'],
+              ['light', 'Light'],
+              ['dark', 'Dark'],
+            ]}
+          />
+          <SelectField
+            label="Background"
+            value={settings.backgroundStyle}
+            onChange={(value) => onSettingsChange({ backgroundStyle: value as PlannerSettings['backgroundStyle'] })}
+            options={[
+              ['automatic', 'Automatic'],
+              ['prism', 'Prism'],
+              ['lattice', 'Lattice'],
+              ['rings', 'Rings'],
+            ]}
+          />
+        </Panel>
+
+        <Panel title="Payments" detail="Stripe later">
+          <StatusRow label="Current credits" value={String(credits)} />
+          <StatusRow label="Local purchases" value={String(purchaseHistory.length)} />
+          <StatusBlock>Stripe Checkout and webhook fulfillment should run server-side before adding production credits.</StatusBlock>
+        </Panel>
+      </section>
+    </div>
+  )
+}
+
+function TaskForm({
+  draft,
+  categories,
+  settings,
+  submitLabel,
+  compact = false,
+  onDraftChange,
+  onSubmit,
+}: {
+  draft: TaskDraft
+  categories: PlannerCategory[]
+  settings: PlannerSettings
+  submitLabel: string
+  compact?: boolean
+  onDraftChange: (draft: TaskDraft) => void
+  onSubmit: (draft: TaskDraft) => void
+}) {
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    onSubmit(draft)
+  }
+
+  return (
+    <form className={`task-form ${compact ? 'compact' : ''}`} onSubmit={submit}>
+      <label className="field full">
+        <span>Title</span>
+        <input
+          value={draft.title}
+          maxLength={120}
+          placeholder="Task title"
+          onChange={(event) => onDraftChange({ ...draft, title: event.target.value.slice(0, 120) })}
+        />
+      </label>
+
+      {settings.categoriesEnabled ? (
+        <label className="field">
+          <span>Category</span>
+          <select
+            value={draft.categoryTitle}
+            onChange={(event) => onDraftChange({ ...draft, categoryTitle: event.target.value })}
+          >
+            {categories.map((category) => (
+              <option key={category.id}>{category.title}</option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
+      <ToggleRow
+        label="Deadline"
+        checked={draft.usesDeadline}
+        onChange={(value) => onDraftChange({ ...draft, usesDeadline: value })}
+      />
+
+      {draft.usesDeadline ? (
+        <>
+          <label className="field">
+            <span>Date</span>
+            <input
+              type="date"
+              value={draft.deadlineDate}
+              onChange={(event) =>
+                onDraftChange({
+                  ...draft,
+                  deadlineDate: event.target.value,
+                  startDate: draft.usesDuration ? event.target.value : draft.startDate,
+                  repeatEndDate: draft.repeatEndDate < event.target.value ? event.target.value : draft.repeatEndDate,
+                })
+              }
+            />
+          </label>
+          <ToggleRow
+            label="Specific time"
+            checked={draft.hasSpecificTime}
+            onChange={(value) => onDraftChange({ ...draft, hasSpecificTime: value, usesDuration: value ? draft.usesDuration : false })}
+          />
+          {draft.hasSpecificTime ? (
+            <label className="field">
+              <span>Due time</span>
+              <input
+                type="time"
+                value={draft.deadlineTime}
+                onChange={(event) => onDraftChange({ ...draft, deadlineTime: event.target.value })}
+              />
+            </label>
+          ) : null}
+          <ToggleRow
+            label="Duration"
+            checked={draft.usesDuration}
+            onChange={(value) => onDraftChange({ ...draft, usesDuration: value, hasSpecificTime: value ? true : draft.hasSpecificTime })}
+          />
+          {draft.usesDuration ? (
+            <>
+              <label className="field">
+                <span>Start date</span>
+                <input
+                  type="date"
+                  value={draft.startDate}
+                  onChange={(event) => onDraftChange({ ...draft, startDate: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Start time</span>
+                <input
+                  type="time"
+                  value={draft.startTime}
+                  onChange={(event) => onDraftChange({ ...draft, startTime: event.target.value })}
+                />
+              </label>
+            </>
+          ) : null}
+          <ToggleRow
+            label="Repeating"
+            checked={draft.repeats}
+            onChange={(value) => onDraftChange({ ...draft, repeats: value })}
+          />
+          {draft.repeats ? (
+            <>
+              <div className="weekday-picker">
+                {weekdays.map((weekday, index) => (
+                  <button
+                    className={draft.repeatWeekdays.includes(index) ? 'active' : ''}
+                    type="button"
+                    key={weekday}
+                    onClick={() => {
+                      const next = draft.repeatWeekdays.includes(index)
+                        ? draft.repeatWeekdays.filter((day) => day !== index)
+                        : [...draft.repeatWeekdays, index].sort()
+                      onDraftChange({ ...draft, repeatWeekdays: next.length === 0 ? [index] : next })
+                    }}
+                  >
+                    {weekday}
+                  </button>
+                ))}
+              </div>
+              <label className="field">
+                <span>Repeat until</span>
+                <input
+                  type="date"
+                  value={draft.repeatEndDate}
+                  min={draft.deadlineDate}
+                  onChange={(event) => onDraftChange({ ...draft, repeatEndDate: event.target.value })}
+                />
+              </label>
+            </>
+          ) : null}
+        </>
+      ) : null}
+
+      <label className="field full">
+        <span>Note</span>
+        <textarea
+          value={draft.note}
+          rows={compact ? 2 : 3}
+          placeholder="Notes for this task"
+          onChange={(event) => onDraftChange({ ...draft, note: event.target.value })}
+        />
+      </label>
+
+      <button className="primary-button full" type="submit">
+        {submitLabel}
+      </button>
+    </form>
+  )
+}
+
+function TaskStack({
+  tasks,
+  categories,
+  settings,
+  notes,
+  emptyTitle = 'No tasks',
+  emptyDetail = 'Tasks appear here when they match this view.',
+  onToggleTask,
+  onEditTask,
+  onDeleteTask,
+  onOpenCalendar,
+}: {
+  tasks: PlannerTaskItem[]
+  categories: PlannerCategory[]
+  settings: PlannerSettings
+  notes: Record<string, string>
+  emptyTitle?: string
+  emptyDetail?: string
+  onToggleTask: (taskId: string) => void
+  onEditTask: (task: PlannerTaskItem) => void
+  onDeleteTask: (task: PlannerTaskItem) => void
+  onOpenCalendar?: (date: string) => void
+}) {
+  if (tasks.length === 0) return <EmptyState title={emptyTitle} detail={emptyDetail} />
+
+  return (
+    <div className="task-stack">
+      {tasks.map((task) => {
+        const category = categoryForTask(categories, task)
+        const calendarDate = task.deadline === null ? null : dateKey(new Date(task.deadline))
+        return (
+          <article className={`task-row ${task.isCompleted ? 'completed' : ''}`} key={task.id}>
+            <label className="task-check">
+              <input type="checkbox" checked={task.isCompleted} onChange={() => onToggleTask(task.id)} />
+              <span />
+            </label>
+            <button className="task-main" type="button" onClick={() => onEditTask(task)}>
+              <strong>{task.title}</strong>
+              <small>
+                {formatTaskTime(task.deadline, task.startDate)}
+                {settings.categoriesEnabled ? ` / ${task.categoryTitle}` : ''}
+                {task.seriesID !== null ? ' / Repeats' : ''}
+              </small>
+              {notes[task.id] ? <em>{notes[task.id]}</em> : null}
+            </button>
+            {settings.categoriesEnabled ? <span className="category-chip" style={{ color: category.color }}>{category.title}</span> : null}
+            <div className="task-actions">
+              {calendarDate && onOpenCalendar ? (
+                <button type="button" onClick={() => onOpenCalendar(calendarDate)}>
+                  Calendar
+                </button>
+              ) : null}
+              <button type="button" onClick={() => onEditTask(task)}>
+                Edit
+              </button>
+              <button className="danger-button" type="button" onClick={() => onDeleteTask(task)}>
+                Delete
+              </button>
+            </div>
+          </article>
+        )
+      })}
+    </div>
+  )
+}
+
+function NotebookSection({
+  title,
+  tasks,
+  categories,
+  settings,
+  notes,
+  emptyTitle,
+  onToggleTask,
+  onEditTask,
+  onDeleteTask,
+}: {
+  title: string
+  tasks: PlannerTaskItem[]
+  categories: PlannerCategory[]
+  settings: PlannerSettings
+  notes: Record<string, string>
+  emptyTitle: string
+  onToggleTask: (taskId: string) => void
+  onEditTask: (task: PlannerTaskItem) => void
+  onDeleteTask: (task: PlannerTaskItem) => void
+}) {
+  return (
+    <section className="notebook-section">
+      <h3>{title}</h3>
+      <TaskStack
+        tasks={tasks}
+        categories={categories}
+        settings={settings}
+        notes={notes}
+        emptyTitle={emptyTitle}
+        emptyDetail="Adjust the notebook sort controls to inspect another date range."
+        onToggleTask={onToggleTask}
+        onEditTask={onEditTask}
+        onDeleteTask={onDeleteTask}
+      />
+    </section>
+  )
+}
+
+function TaskEditorDialog({
+  editing,
+  categories,
+  settings,
+  onSave,
+  onClose,
+}: {
+  editing: EditingState
+  categories: PlannerCategory[]
+  settings: PlannerSettings
+  onSave: (draft: TaskDraft) => void
+  onClose: () => void
+}) {
+  const [draft, setDraft] = useState(editing.draft)
+  return (
+    <Modal title={editing.scope === 'thisAndLaterRepeats' ? 'Edit this and later repeats' : 'Edit task'} onClose={onClose}>
+      <TaskForm
+        draft={draft}
+        categories={categories}
+        settings={settings}
+        submitLabel="Save task"
+        onDraftChange={setDraft}
+        onSubmit={onSave}
+      />
+    </Modal>
+  )
+}
+
+function ScopeDialog({
+  task,
+  action,
+  onSelect,
+  onClose,
+}: {
+  task: PlannerTaskItem
+  action: 'edit' | 'delete'
+  onSelect: (scope: EditScope) => void
+  onClose: () => void
+}) {
+  return (
+    <Modal title={`${action === 'edit' ? 'Edit' : 'Delete'} repeated task`} onClose={onClose}>
+      <p className="dialog-copy">Choose how much of "{task.title}" to {action}.</p>
+      <div className="dialog-actions">
+        <button type="button" onClick={() => onSelect('onlyThisTask')}>
+          Only this task
+        </button>
+        <button type="button" onClick={() => onSelect('thisAndLaterRepeats')}>
+          This and later repeats
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal" role="dialog" aria-modal="true" aria-label={title}>
+        <header className="modal-header">
+          <h2>{title}</h2>
+          <button type="button" onClick={onClose}>
+            Close
+          </button>
+        </header>
+        {children}
       </section>
     </div>
   )
@@ -654,41 +1557,51 @@ function SettingsPage({
 function PageHeader({
   eyebrow,
   title,
+  detail,
   action,
 }: {
   eyebrow: string
   title: string
+  detail: string
   action?: React.ReactNode
 }) {
   return (
     <header className="page-header">
       <div>
-        <p className="label">{eyebrow}</p>
+        <p className="eyebrow">{eyebrow}</p>
         <h1>{title}</h1>
+        <span>{detail}</span>
       </div>
       {action ? <div className="page-action">{action}</div> : null}
     </header>
   )
 }
 
-function SectionHeader({ title, detail }: { title: string; detail: string }) {
+function Panel({
+  title,
+  detail,
+  tone,
+  className = '',
+  children,
+}: {
+  title: string
+  detail: string
+  tone?: 'danger'
+  className?: string
+  children: React.ReactNode
+}) {
   return (
-    <div className="section-header">
-      <h2>{title}</h2>
-      <span>{detail}</span>
-    </div>
+    <section className={`panel ${tone ?? ''} ${className}`}>
+      <div className="panel-header">
+        <h2>{title}</h2>
+        <span>{detail}</span>
+      </div>
+      {children}
+    </section>
   )
 }
 
-function MetricCard({
-  label,
-  value,
-  tone = 'normal',
-}: {
-  label: string
-  value: number
-  tone?: 'normal' | 'danger'
-}) {
+function MetricCard({ label, value, tone = 'normal' }: { label: string; value: number; tone?: 'normal' | 'danger' }) {
   return (
     <article className={`metric-card ${tone}`}>
       <span>{label}</span>
@@ -697,128 +1610,11 @@ function MetricCard({
   )
 }
 
-function TaskForm({
-  draft,
-  onDraftChange,
-  onAddTask,
-}: {
-  draft: TaskDraft
-  onDraftChange: (draft: TaskDraft) => void
-  onAddTask: (event: FormEvent<HTMLFormElement>) => void
-}) {
+function EmptyState({ title, detail }: { title: string; detail: string }) {
   return (
-    <form className="task-form" onSubmit={onAddTask}>
-      <input
-        aria-label="Task title"
-        placeholder="Task name"
-        value={draft.title}
-        onChange={(event) => onDraftChange({ ...draft, title: event.target.value })}
-      />
-      <div className="task-form-grid">
-        <input
-          aria-label="Task date"
-          type="date"
-          value={draft.date}
-          onChange={(event) => onDraftChange({ ...draft, date: event.target.value })}
-        />
-        <input
-          aria-label="Task time"
-          type="time"
-          value={draft.time}
-          onChange={(event) => onDraftChange({ ...draft, time: event.target.value })}
-        />
-        <select
-          aria-label="Category"
-          value={draft.category}
-          onChange={(event) => onDraftChange({ ...draft, category: event.target.value as Category })}
-        >
-          <option>Study</option>
-          <option>Work</option>
-          <option>Personal</option>
-          <option>Health</option>
-        </select>
-        <select
-          aria-label="Priority"
-          value={draft.priority}
-          onChange={(event) => onDraftChange({ ...draft, priority: event.target.value as Priority })}
-        >
-          <option>High</option>
-          <option>Medium</option>
-          <option>Low</option>
-        </select>
-      </div>
-      <button className="primary-button" type="submit">
-        Add task
-      </button>
-    </form>
-  )
-}
-
-function TaskStack({
-  tasks,
-  emptyTitle,
-  emptyDetail,
-  onToggleTask,
-  onDeleteTask,
-  onOpenCalendar,
-}: {
-  tasks: Task[]
-  emptyTitle: string
-  emptyDetail: string
-  onToggleTask: (taskId: string) => void
-  onDeleteTask?: (taskId: string) => void
-  onOpenCalendar?: (dateKey: string) => void
-}) {
-  if (tasks.length === 0) {
-    return (
-      <div className="empty-state">
-        <strong>{emptyTitle}</strong>
-        <span>{emptyDetail}</span>
-      </div>
-    )
-  }
-
-  return (
-    <div className="task-stack">
-      {tasks.map((task) => (
-        <article className={`task-row ${task.done ? 'done' : ''}`} key={task.id}>
-          <label>
-            <input type="checkbox" checked={task.done} onChange={() => onToggleTask(task.id)} />
-            <span>
-              <strong>{task.title}</strong>
-              <small>
-                {formatDate(task.date)} at {task.time} - {task.category} - {task.priority}
-              </small>
-            </span>
-          </label>
-          <div className="task-actions">
-            {onOpenCalendar ? (
-              <button type="button" onClick={() => onOpenCalendar(task.date)}>
-                Calendar
-              </button>
-            ) : null}
-            {onDeleteTask ? (
-              <button type="button" onClick={() => onDeleteTask(task.id)}>
-                Delete
-              </button>
-            ) : null}
-          </div>
-        </article>
-      ))}
-    </div>
-  )
-}
-
-function StatusPill({ children }: { children: React.ReactNode }) {
-  return <span className="status-pill">{children}</span>
-}
-
-function RuleItem({ title, value, detail }: { title: string; value: string; detail: string }) {
-  return (
-    <div className="rule-item">
-      <span>{title}</span>
-      <strong>{value}</strong>
-      <p>{detail}</p>
+    <div className="empty-state">
+      <strong>{title}</strong>
+      <span>{detail}</span>
     </div>
   )
 }
@@ -847,6 +1643,76 @@ function ToggleRow({
   )
 }
 
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: string
+  options: Array<readonly [string, string]>
+  onChange: (value: string) => void
+}) {
+  return (
+    <label className="field select-field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map(([optionValue, optionLabel]) => (
+          <option value={optionValue} key={optionValue}>
+            {optionLabel}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+function Segmented({
+  value,
+  items,
+  onChange,
+}: {
+  value: string
+  items: Array<readonly [string, string]>
+  onChange: (value: string) => void
+}) {
+  return (
+    <div className="segmented">
+      {items.map(([itemValue, label]) => (
+        <button className={value === itemValue ? 'active' : ''} type="button" key={itemValue} onClick={() => onChange(itemValue)}>
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function ActionButton({ title, detail, onClick }: { title: string; detail: string; onClick: () => void }) {
+  return (
+    <button className="action-row" type="button" onClick={onClick}>
+      <span>
+        <strong>{title}</strong>
+        <small>{detail}</small>
+      </span>
+      <b>Run</b>
+    </button>
+  )
+}
+
+function RuleItem({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rule-item">
+      <span>{title}</span>
+      <strong>{value}</strong>
+    </div>
+  )
+}
+
+function StatusBlock({ children }: { children: React.ReactNode }) {
+  return <p className="status-block">{children}</p>
+}
+
 function StatusRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="status-row">
@@ -854,66 +1720,6 @@ function StatusRow({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   )
-}
-
-function buildCalendarDays(month: Date) {
-  const start = new Date(month.getFullYear(), month.getMonth(), 1)
-  const firstVisibleDate = addDays(start, -start.getDay())
-  return Array.from({ length: 42 }, (_, index) => addDays(firstVisibleDate, index))
-}
-
-function addDays(date: Date, days: number) {
-  const nextDate = new Date(date)
-  nextDate.setDate(nextDate.getDate() + days)
-  return nextDate
-}
-
-function createEmptyDraft(date: string): TaskDraft {
-  return {
-    title: '',
-    date,
-    time: '12:00',
-    category: 'Study',
-    priority: 'Medium',
-  }
-}
-
-function toDateInputValue(date: Date) {
-  const year = date.getFullYear()
-  const month = `${date.getMonth() + 1}`.padStart(2, '0')
-  const day = `${date.getDate()}`.padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function parseDateValue(value: string) {
-  const [year, month, day] = value.split('-').map(Number)
-  return new Date(year, month - 1, day)
-}
-
-function formatDate(value: string) {
-  return compactDateFormatter.format(parseDateValue(value))
-}
-
-function compareTasks(a: Task, b: Task) {
-  return (
-    `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`) ||
-    priorityRank[a.priority] - priorityRank[b.priority] ||
-    a.title.localeCompare(b.title)
-  )
-}
-
-function loadStoredTasks() {
-  const storedTasks = localStorage.getItem(tasksStorageKey)
-  if (storedTasks === null) return seedTasks
-
-  try {
-    const parsedTasks = JSON.parse(storedTasks)
-    if (Array.isArray(parsedTasks)) return parsedTasks as Task[]
-  } catch {
-    return seedTasks
-  }
-
-  return seedTasks
 }
 
 export default App
