@@ -1,6 +1,6 @@
 import './App.css'
 
-const supportEmail = 'atali772@gmail.com'
+const supportEmail = 'focusguardweb@gmail.com'
 const siteUrl = 'https://focusguardweb.netlify.app'
 
 function App() {
